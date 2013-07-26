@@ -1,0 +1,10 @@
+
+class X {
+}
+
+class Y {
+    X f;
+    void set(X x) { this.f = x; }
+}
+
+

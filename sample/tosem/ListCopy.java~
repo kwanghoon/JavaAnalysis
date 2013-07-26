@@ -1,0 +1,10 @@
+
+class Elem {
+}
+
+class List {
+    List copy() {
+	return new List(); 
+    }
+}
+

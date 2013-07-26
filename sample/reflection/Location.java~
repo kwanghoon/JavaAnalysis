@@ -1,0 +1,14 @@
+
+class Location {
+    public void onLocationChanged(Location location) {
+	Double[] locArr = new Double[2];
+	Method[] m      = new Method[4];
+	SmsManger[] sms = new SmsManager[1];
+
+	try {
+	}
+	catch (Throwable e) {
+	    System.err.println(e);
+	}
+    }
+}

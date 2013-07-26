@@ -1,0 +1,41 @@
+
+0. Parser
+  - /* */  (DONE)
+  - package ...;  (DONE)
+  - import ...; (DONE)
+  - public, abstract attributes of class (DONE)
+  - interface, implements (DONE)
+  - final attributes of variable (DONE)
+  - private, final attributes of member variable (DONE)
+  - member variable initialization expression (DONE)
+  - while (DONE)
+  - for (DONE)
+  - while, for type-checking (DONE)
+  - Adding the prefix as [this.] x when needed (DONE)
+  - '\t' (DONE)
+  - expr1 = expr2 (DONE)
+    a) expr1 = var => this.var or var
+    b) expr1 = expr1'.var => fieldAssign
+    c) expr1 = expr1'[expr1''] => Prim "[]=" ...
+               (expr1' = var or expr1' = this.x or ...)
+  - support something like this.f.m()  (DONE)
+  - ++, --, <, != (DONE)
+  - static method/static field (DONE)
+  - static attribute (DONE)
+
+  - String.append
+  - System.out.println
+  - Set/HashSet
+  - argument expression (not atomic expression)
+  - Iterator.hasNext Iterator.next
+  - External supply for Java library
+  - interface, implements type-checking
+
+1. Android Game 논문 예제 OK
+2. TOSEM 논문 예제 OK
+3. Java Type checker
+4. Type Analysis
+5. Design Pattern 예제 (one in FJ, and the other in Full Java)
+6. Java Type checker
+7. Type Analysis
+

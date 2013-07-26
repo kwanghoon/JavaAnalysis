@@ -1,0 +1,16 @@
+
+class Container {
+    Object[] data;
+    Container(int size) {
+	Object[] data_tmp = new Object[size];
+	this.data = data_tmp;
+    }
+    void put(Object e, int at) {
+	Object[] data_tmp = this.data;
+	data_tmp[at] = e;
+    }
+    Object get(int at) {
+	Object[] data_tmp = this.data;
+	return data_tmp[at];
+    }
+}

@@ -1,0 +1,5 @@
+
+class MySet extends HashSet {
+}
+
+
