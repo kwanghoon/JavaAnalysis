@@ -1,3 +1,0 @@
-
-class VisitorAdapter extends IVisitor {
-}

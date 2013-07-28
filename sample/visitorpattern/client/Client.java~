@@ -1,8 +1,0 @@
-
-class Client {
-	void main(String[] args) {
-		final Compiler compiler = new Compiler();
-		final CompilationUnit compilationUnit = compiler.compile();
-		compilationUnit.accept(new PrettyPrinter());
-	}
-}
