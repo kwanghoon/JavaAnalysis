@@ -28,8 +28,7 @@
   - argument expression (not atomic expression) (DONE)
   - Iterator.hasNext Iterator.next (DONE)
   - External supply for Java library (DONE)
-
-  - interface, implements type-checking
+  - interface, implements type-checking (DONE)
 
 
 1. Android Game 논문 예제 OK
