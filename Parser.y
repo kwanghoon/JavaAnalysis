@@ -104,12 +104,16 @@ N	: optAccess optAbstract optStatic class classname optExtend optImplements '{' 
           { let attr = if $3 then ["static"] else []
             in  Class attr $5 $6 $7 $9 
           }
-        | optAccess interface classname optExtend '{' abstractMemberDecl '}'
+        | optAccess interface classname optExtends '{' abstractMemberDecl '}'
 	  { Interface $3 $4 $6 }
 
 optExtend
         :                   { Nothing }
         | extends classname { Just $2 }
+
+optExtends
+        :                    { [] }
+        | extends classnames { $2 }
 
 optImplements
         :                       { [] }

@@ -3,6 +3,12 @@ module AST where
 import Data.List
 
 --
+static    = "static"
+abstract  = "abstract"
+java_class    = "class"
+java_interface = "interface"
+
+--
 type Name = String
 
 type Attrib = String
@@ -11,7 +17,7 @@ type Attrib = String
 type Program = [Class]
 
 data Class = Class [Attrib] Name (Maybe Name) [Name] MemberDecls 
-           | Interface Name (Maybe Name) MemberDecls
+           | Interface Name [Name] MemberDecls
 
 type MemberDecls = [MemberDecl]
 
@@ -176,9 +182,9 @@ instance Show Class where
     combine (map (showsPrec (p+1)) mdecl) .
     conc ["}", "\n"]
 
-  showsPrec p (Interface c maybepc mdecl) =
+  showsPrec p (Interface c is mdecl) =
     tabstop p. conc ["interface", " ", c, " "] . 
-    opt maybepc (\pc -> conc ["extends", " ", pc]) .
+    list is (\is -> conc ["extends", " "] . conc (comma is)) .
     conc [" ", "{", "\n"] .
     combine (map (showsPrec (p+1)) mdecl) .
     conc ["}", "\n"]

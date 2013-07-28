@@ -1,5 +1,5 @@
 
-class AbstractNode extends IVisitable {
+class AbstractNode implements IVisitable {
     String name;
     AbstractNode(String aName) {
  	this.name = aName;

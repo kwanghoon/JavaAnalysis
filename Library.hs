@@ -6,11 +6,11 @@ objClass = "Object"
 strClass = "String"
 
 basicClasses = -- TODO: extension
-  [ strClass,
-    objClass,
-    "HashSet",
-    "Set",
-    "Iterator"
+  [ (strClass,   [java_class]),
+    (objClass,   [java_class]),
+    ("HashSet",  [java_class]),
+    ("Set",      [java_class]), -- interface?
+    ("Iterator", [java_class])  -- interface?
   ]
 
 basicInheritance =  -- TODO: extension

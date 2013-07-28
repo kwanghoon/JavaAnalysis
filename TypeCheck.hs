@@ -1,15 +1,12 @@
 module TypeCheck where
 
 import AST
+import Library
 import Data.Maybe
 import Data.List
 import Data.Either
 
-objClass = "Object"
-strClass = "String"
-static   = "static"
-
-type Info = ([Name], 
+type Info = ([(Name, [Attrib])], 
              [(Name,Name)], 
              [(Name, [(TypeName, Name, [Attrib])])],
              [(Name, Name, [TypeName], TypeName, [Attrib])],
@@ -45,7 +42,8 @@ prTyInfo (userClasses, inheritance, fields, mtypes, mbodies) =
 prUserClasses userClasses = 
   do putStrLn "Classes: "
      mapM_ putStrLn 
-       $ map (\c -> " - " ++ c) $ userClasses
+       $ map (\(c,attrs) -> 
+           " - " ++ (concat $ intersperse ", " $ attrs) ++ " " ++ c) userClasses
      putStrLn ""
      
 prInheritance inheritance =     
@@ -85,81 +83,53 @@ prMbody mbody =
 initTypeCheck :: Program -> Info     
 initTypeCheck cs = (userClasses, inheritance, fields, mtype, mbody)
   where
-    userClasses = [ c | Class _ c _ _ _ <- cs ]
-    inheritance = [ (c,d) | Class _ c (Just d) _ _ <- cs ] 
-                  ++
-                  [ (c,objClass) | Class _ c Nothing _ _ <- cs ]
-                  ++
-                  basicInheritance
+    userClasses = map fclass cs 
+    fclass (Class attrs c _ _ _) = (c, [java_class])
+    fclass (Interface c _ _)     = (c, [java_interface])
     
-    fields = [ (c, mkFields cs userClasses c) | c <- userClasses]
-    mtype  = concat [ mkMtype cs userClasses c | c <- userClasses ]
-    mbody  = concat [ mkMbody cs userClasses c | c <- userClasses ]
+    inheritance = concat $ map finherit cs 
+    finherit (Class _ c maybepc pis _) = [ (c, fpcorobj maybepc) ] ++ 
+                                         [ (c,pi) | pi <- pis ]
+    finherit (Interface c [] _)  = [(c, objClass)]
+    finherit (Interface c pis _) = [(c, pi) | pi <- pis]
     
-basicClasses = -- TODO: extension
-  [ strClass,
-    objClass,
-    "HashSet",
-    "Set",
-    "Iterator"
-  ]
+    fpcorobj (Just c)  = c
+    fpcorobj (Nothing) = objClass
+    
+    fields = [ (c, mkFields cs userClasses c) | (c, _) <- userClasses]
+    mtype  = concat [ mkMtype cs userClasses c | (c, _) <- userClasses ]
+    mbody  = concat [ mkMbody cs userClasses c | (c, _) <- userClasses ]
 
-basicInheritance =  -- TODO: extension
-  [ (strClass, objClass),
-    ("HashSet", "Set")
-  ]
-  
-basicFields = -- TODO: extension
-  [
-    ("System", [(TypeName "PrintStream", "out", [static])])
-  ]
-  
-basicMtypes = -- TODO: extension  
-  [ 
-    ("Set", "add", [TypeName "Object"], TypeName "boolean", []),
-    ("Set", "remove", [TypeName "Object"], TypeName "boolean", []),
-    ("Set", "iterator", [], TypeName "Iterator", []),
-    
-    ("HashSet", "add", [TypeName "Object"], TypeName "boolean", []),
-    ("HashSet", "remove", [TypeName "Object"], TypeName "boolean", []),
-    ("HashSet", "iterator", [], TypeName "Iterator", []),
-    
-    ("Iterator", "hasNext", [], TypeName "boolean", []),
-    ("Iterator", "next", [], TypeName "Object", []),
-    ("Iterator", "remove", [], TypeName "void", []),
-    
-    ("StringBuilder", "StringBuilder", [], TypeName "StringBuilder", []),
-    ("StringBuilder", "append", [TypeName "String"], TypeName "StringBuilder", []),
-    ("StringBuilder", "append", [TypeName "char"], TypeName "StringBuilder", []),
-    ("StringBuilder", "setLength", [TypeName "int"], TypeName "void", []),
-    ("StringBuilder", "toString", [], TypeName "String", []),
-    
-    ("String", "equals", [TypeName "String"], TypeName "boolean", []),
-
-    ("PrintStream", "println", [TypeName "String"], TypeName "void", [static])
-  ]
 
 getClassDef cs c = 
-  case [ def | def@(Class _ d _ _ _) <- cs, c == d ] of
-    [def] -> [def]
+  let fname (Class _ d _ _ _) = d
+      fname (Interface d _ _) = d
+  in
+  case [ def | def <- cs, c == fname def ] of
+    [def] -> def
     []    -> error $ "getClassDef: class definition not found " ++ c
     defs  -> error $ "getClassDef: multiple definitions for " ++ c
 
 mkFields cs ucs c =
-  if elem c ucs
+  if isUserClass c ucs || isUserInterface c ucs
      then mkFields' cs ucs c
      else mkFields'' cs ucs c     
           
 mkFields' cs ucs c = 
   if c == objClass 
   then []
-  else dxs ++ dxs'
+  else dxs -- ++ dxs1 ++ dxs2 -- TODO: duplicate fields
   where
-    [Class _ _ maybec maybeis mdecls] = getClassDef cs c
+    (maybec, is, mdecls) =
+      case getClassDef cs c of
+        Class _ _ maybec is mdecls -> (maybec, is, mdecls)
+        Interface _ is mdecls -> (Nothing, is, mdecls)
+        
     dxs  = [ (d,x,attrs) | FieldDecl attrs d x maybei <- mdecls ]
-    dxs' = if isJust maybec 
+    dxs1 = if isJust maybec 
            then mkFields cs ucs (fromJust maybec)
            else []
+    dxs2 = concat [mkFields cs ucs i | i <- is]
 
 
 mkFields'' cs ucs c = concat mfields 
@@ -168,39 +138,66 @@ mkFields'' cs ucs c = concat mfields
   
   
 mkMtype cs ucs c =
-  if elem c ucs
+  if isUserClass c ucs || isUserInterface c ucs
      then mkMtype' cs ucs c 
      else mkMtype'' cs ucs c
      
-mkMtype' cs ucs c = dxs ++ dxs'
+mkMtype' cs ucs c = dxs -- ++ dxs1 ++ dxs2
   where
-    [Class _ _ maybec maybeis mdecls] = getClassDef cs c
-    dxs   = [(c, m, map fst args, d, attrs) 
-            | MethodDecl attrs d m args _ <- mdecls] ++
-            [(c, c, map fst args, TypeName dn, []) 
-            | ConstrDecl dn args _ <- mdecls]
-    dxs'  = [(c, m, tyns, d, attrs) 
-            | (_, m, tyns, d, attrs) <- dxs'', notin m dxs]
-    dxs'' = if isJust maybec 
+    (maybec, is, mdecls) =
+      case getClassDef cs c of
+        Class _ _ maybec is mdecls -> (maybec, is, mdecls)
+        Interface _ is mdecls -> (Nothing, is, mdecls)
+
+    dxs   = concat [ fmdecl mdecl | mdecl <- mdecls]
+            
+    fmdecl (MethodDecl attrs d m args _) = [(c, m, map fst args, d, attrs)]
+    fmdecl (ConstrDecl dn args _) = [(c, c, map fst args, TypeName dn, [])]
+    fmdecl (AbstractMethodDecl d m args) = [(c, m, map fst args, d, [abstract])]
+    fmdecl (FieldDecl _ _ _ _)           = []
+    
+    dxs1  = [ (c, m, tyns, d, attrs) 
+            | (_, m, tyns, d, attrs) <- dxs1' ++ dxs2, notin m dxs]
+    dxs1' = if isJust maybec 
             then mkMtype cs ucs (fromJust maybec)
             else []
-    notin m dxs = and [ m /= m' | (_, m', _, _, _) <- dxs ]
+    dxs2  = concat [ mkMtype cs ucs i | i <- is ]
+      
+    notin m dxs = and [ m /= m' | (_, m', _, _, _) <- dxs ] -- TODO: subtype?
     
 mkMtype'' cs ucs c = mtypes
   where
     mtypes = [ (c, m,argtys, retty, attrs) 
              | (c', m, argtys, retty, attrs) <- basicMtypes, c == c']
 
-mkMbody cs ucs c = dxs ++ dxs'
+mkMbody cs ucs c = dxs -- ++ dxs1
   where
-    [Class _ _ maybec maybeis mdecls] = getClassDef cs c
-    dxs   = [(c, m, args, s) | MethodDecl attrs d m args s <- mdecls] ++
-            [(c, c, args, s) | ConstrDecl dn args s <- mdecls]
-    dxs'  = [(c, m, args, s) | (_,m,args,s) <- dxs'', notin m dxs]
-    dxs'' = if isJust maybec 
+    (maybec, is, mdecls) =
+      case getClassDef cs c of
+        Class _ _ maybec is mdecls -> (maybec, is, mdecls)
+        Interface _ is mdecls -> (Nothing, is, mdecls)
+
+    dxs   = concat [fmdecl mdecl | mdecl <- mdecls]
+            
+    fmdecl (MethodDecl attrs d m args s) = [(c, m, args, s)]
+    fmdecl (ConstrDecl dn args s)        = [(c, c, args, s)]
+    fmdecl (AbstractMethodDecl d m args) = []
+    fmdecl (FieldDecl _ _ _ _)           = []
+    
+    dxs1  = [(c, m, args, s) | (_,m,args,s) <- dxs1' ++ dxs2, notin m dxs]
+    dxs1' = if isJust maybec 
             then mkMbody cs ucs (fromJust maybec)
             else []
-    notin m dxs = and [ m /= m' | (_, m', _, _) <- dxs ]
+    dxs2  = concat [ mkMbody cs ucs i | i <- is ]
+    notin m dxs = and [ m /= m' | (_, m', _, _) <- dxs ] -- TODO: subtype?
+    
+isUserClass c ucs =     
+  not $ null $ 
+  [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_class attribs ]
+
+isUserInterface c ucs =     
+  not $ null $ 
+  [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_interface attribs ]
 
 -- 2. Do typecheck
     
@@ -223,7 +220,9 @@ subType info (TypeName c) (TypeName d) =
   c == "null" || 
   c == d || 
   or [ subType info (TypeName pc) (TypeName d) 
-     | (cc,pc) <- inheritance, cc == c ]
+     | (cc,pc) <- inheritance, cc == c ] || 
+  or [ subType info (TypeName pc) (TypeName d) 
+     | (cc,pc) <- basicInheritance, cc == c ]
   where
     inheritance = getInheritance info
 subType info (ArrayTypeName c) (ArrayTypeName d) = subType info c d
@@ -262,10 +261,18 @@ tcProgram info program =
   do rs <- mapM (tcClass info) program
      return $ anyJust $ rs
      
+
 tcClass info (Class attrs n p is mdecls) =
   do rs <- mapM (tcMdecl info (n, p, is)) mdecls
      return $ anyJust $ rs
-     
+tcClass info (Interface n is mdecls) =
+  do rs <- mapM (tcMdecl info (n, Nothing, is)) mdecls -- TODO: all abstract?
+     return $ anyJust $ rs
+
+
+tcMdecl info (c,p,is) (AbstractMethodDecl retty m targs) =
+  do return $ Nothing
+                       
 tcMdecl info (c,p,is) (MethodDecl attrs retty m targs stmt) = 
   do let env = ((c, p, is, Just m), 
                 ("this", TypeName c) : [(x,c) | (c, x) <- targs])
@@ -297,7 +304,8 @@ tcMdecl info (c,p,is) (FieldDecl attrs t v maybei) =
                           "tcMdecl: type error in the initializer: " ++
                           show (FieldDecl attrs t v maybei)
                      else return $ Nothing
-
+                          
+                          
 tcExps info env [] = return (Left (TypeName "void"))
 tcExps info env [exp] = tcExp info env exp
 tcExps info env (exp:exps) = 
@@ -319,23 +327,24 @@ lookupFields info (ArrayTypeName c) f =
   else Nothing
   
 lookupFields' info c f =
-  let ucs = getUserClasses info in
-  if elem c ucs
-     then lookupFields'' info c f
-     else lookupFields''' info c f
+  if isUserClass c (getUserClasses info) || 
+     isUserInterface c (getUserClasses info)
+     then lookupFields'' info c f (getFields info) (getInheritance info)
+     else lookupFields'' info c f basicFields basicInheritance
   
-lookupFields'' info c f =
-  let fields = getFields info in
+lookupFields'' info c f fields inheritance =
   case [(e,attrs) 
        | (d,cfs) <- fields, c==d, (e,g,attrs) <- cfs, f==g] of
-    []    -> Nothing
+    []    -> lookupFields''' info c f inheritance
     (p:_) -> Just p
     
-lookupFields''' info c f = 
-  case [(e,attrs) 
-       | (d,cfs) <- basicFields, c==d, (e,g,attrs) <- cfs, f==g] of  
-    [] -> Nothing
-    (p:_) -> Just p
+lookupFields''' info c f inheritance =
+  case filter isJust 
+       [ lookupFields' info c2 f | (c1,c2) <- inheritance, c==c1 ]
+  of 
+    []  -> Nothing -- No such field
+    [f] -> f
+    fs  -> Nothing -- Duplicate field
     
 lookupMtype info (TypeName c) m argtys = 
   lookupMtype' info c m argtys
@@ -343,33 +352,30 @@ lookupMtype info (ArrayTypeName c) m argtys =
   Nothing  -- No method is available for arrays
   
 lookupMtype' info c m argtys =
-  let ucs = getUserClasses info in    
-  if elem c ucs
-     then lookupMtype'' info c m argtys
-     else lookupMtype''' info c m argtys
+  if isUserClass c (getUserClasses info) || 
+     isUserInterface c (getUserClasses info)
+     then lookupMtype'' info c m argtys (getMtype info) (getInheritance info)
+     else lookupMtype'' info c m argtys basicMtypes basicInheritance
 
-lookupMtype'' info c m argtys =
-  let mtypes = getMtype info in
+lookupMtype'' info c m argtys mtypes inheritance =
   case [ (argtys', retty, attrs) 
        | (c', m', argtys', retty, attrs) <- mtypes, 
          c == c', 
          m == m',
          subTypes info argtys argtys'
        ] of
-    []   -> Nothing
+    []   -> lookupMtype''' info c m argtys inheritance
     [mt] -> Just mt
     mts  -> chooseMostSpecificMtype info mts
     
-lookupMtype''' info c m argtys =
-  case [ (argtys', retty, attrs) 
-       | (c', m', argtys', retty, attrs) <- basicMtypes, 
-         c == c', 
-         m == m',
-         subTypes info argtys argtys'
-       ] of
-    []   -> Nothing
-    [mt] -> Just mt
-    mts  -> chooseMostSpecificMtype info mts
+lookupMtype''' info c m argtys inheritance =
+  case filter isJust 
+       [ lookupMtype' info c2 m argtys | (c1,c2) <- inheritance, c==c1 ]
+  of 
+    []   -> Nothing -- No such field
+    [mt] -> mt
+    mts  -> chooseMostSpecificMtype info (map fromJust mts)
+    
     
 chooseMostSpecificMtype info mtys =
   case mtys1 of
@@ -390,11 +396,29 @@ lookupKtype info (TypeName "byte") argtys = Nothing
 lookupKtype info (TypeName "boolean") argtys = Nothing -- TODO: distinguish reference types
 lookupKtype info (ArrayTypeName c) argtys = Just [TypeName "int"]
 lookupKtype info (TypeName c) argtys = 
-  let maybemtype = lookupMtype info (TypeName c) c argtys
+  let maybemtype = lookupKtype' info c c argtys
       (argtys', retty, attrs) = fromJust maybemtype
   in  if isNothing maybemtype
       then Just []     -- no arguments are required for this constructor
       else Just argtys'
+           
+lookupKtype' info c m argtys =
+  if isUserClass c (getUserClasses info) || 
+     isUserInterface c (getUserClasses info)
+     then lookupKtype'' info c m argtys (getMtype info) (getInheritance info)
+     else lookupKtype'' info c m argtys basicMtypes basicInheritance
+
+lookupKtype'' info c m argtys mtypes inheritance =
+  case [ (argtys', retty, attrs) 
+       | (c', m', argtys', retty, attrs) <- mtypes, 
+         c == c', 
+         m == m',
+         subTypes info argtys argtys'
+       ] of
+    []   -> Nothing
+    [mt] -> Just mt
+    mts  -> chooseMostSpecificMtype info mts
+           
 
 update (ctx,tyenv) x t = (ctx, (x,t) : [ (y,s) | (y,s) <- tyenv, x /= y ])
 

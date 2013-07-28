@@ -1,5 +1,5 @@
 
-class VisitorAdapter extends IVisitor {
+class VisitorAdapter implements IVisitor {
 	void close(Class aClass) {
 	}
 	void close(CompilationUnit aCompilationUnit) {
