@@ -25,25 +25,25 @@ basicFields = -- TODO: extension
   
 basicMtypes = -- TODO: extension  
   [ 
-    ("Set", "add", [TypeName "Object"], TypeName "boolean", []),
-    ("Set", "remove", [TypeName "Object"], TypeName "boolean", []),
-    ("Set", "iterator", [], TypeName "Iterator", []),
+    ("Set", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+    ("Set", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+    ("Set", "iterator", [], TypeName "Iterator", [], [], Nothing),
     
-    ("HashSet", "add", [TypeName "Object"], TypeName "boolean", []),
-    ("HashSet", "remove", [TypeName "Object"], TypeName "boolean", []),
-    ("HashSet", "iterator", [], TypeName "Iterator", []),
+    ("HashSet", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+    ("HashSet", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+    ("HashSet", "iterator", [], TypeName "Iterator", [], [], Nothing),
     
-    ("Iterator", "hasNext", [], TypeName "boolean", []),
-    ("Iterator", "next", [], TypeName "Object", []),
-    ("Iterator", "remove", [], TypeName "void", []),
+    ("Iterator", "hasNext", [], TypeName "boolean", [], [], Nothing),
+    ("Iterator", "next", [], TypeName "Object", [], [], Nothing),
+    ("Iterator", "remove", [], TypeName "void", [], [], Nothing),
     
-    ("StringBuilder", "StringBuilder", [], TypeName "StringBuilder", []),
-    ("StringBuilder", "append", [TypeName "String"], TypeName "StringBuilder", []),
-    ("StringBuilder", "append", [TypeName "char"], TypeName "StringBuilder", []),
-    ("StringBuilder", "setLength", [TypeName "int"], TypeName "void", []),
-    ("StringBuilder", "toString", [], TypeName "String", []),
+    ("StringBuilder", "StringBuilder", [], TypeName "StringBuilder", [], [], Nothing),
+    ("StringBuilder", "append", [TypeName "String"], TypeName "StringBuilder", [], [], Nothing),
+    ("StringBuilder", "append", [TypeName "char"], TypeName "StringBuilder", [], [], Nothing),
+    ("StringBuilder", "setLength", [TypeName "int"], TypeName "void", [], [], Nothing),
+    ("StringBuilder", "toString", [], TypeName "String", [], [], Nothing),
     
-    ("String", "equals", [TypeName "String"], TypeName "boolean", []),
+    ("String", "equals", [TypeName "String"], TypeName "boolean", [], [], Nothing),
 
-    ("PrintStream", "println", [TypeName "String"], TypeName "void", [static])
+    ("PrintStream", "println", [TypeName "String"], TypeName "void", [static], [], Nothing)
   ]

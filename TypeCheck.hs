@@ -6,29 +6,24 @@ import Data.Maybe
 import Data.List
 import Data.Either
 
-type Info = ([(Name, [Attrib])], 
-             [(Name,Name)], 
-             [(Name, [(TypeName, Name, [Attrib])])],
-             [(Name, Name, [TypeName], TypeName, [Attrib])],
-             [(Name, Name, ArgDecls, Stmt)])
-  
 typecheck program = 
   do let info = initTypeCheck program :: Info 
      maybetc <- tcProgram info program
-     let err = fromJust maybetc
-     if isJust maybetc 
-     then putStrLn err
-     else do prTyInfo info 
-             putStrLn "Successfully typechecked..."
+     prTCResult info maybetc
+     return info
+
+prTCResult info maybetc = do
+  let err = fromJust maybetc
+  if isJust maybetc 
+    then putStrLn err
+    else do prTyInfo info 
+            putStrLn "Successfully typechecked..."
+
      
-getUserClasses (userClasses, inheritance, fields, mtype, mbody) = userClasses 
-getInheritance (userClasses, inheritance, fields, mtype, mbody) = inheritance
-getFields (userClasses, inheritance, fields, mtype, mbody) = fields
-getMtype (userClasses, inheritance, fields, mtype, mbody) = mtype
-getMbody (userClasses, inheritance, fields, mtype, mbody) = mbody
+-- getMbody (userClasses, inheritance, fields, mtype, mbody) = mbody
 
 -- 0. Print type information
-prTyInfo (userClasses, inheritance, fields, mtypes, mbodies) =
+prTyInfo (userClasses, inheritance, fields, mtypes) =
   do prUserClasses userClasses
      prUserClasses basicClasses
      prInheritance inheritance
@@ -37,7 +32,7 @@ prTyInfo (userClasses, inheritance, fields, mtypes, mbodies) =
      prFields basicFields
      prMtype mtypes
      prMtype basicMtypes
-     prMbody mbodies
+--     prMbody mbodies
 
 prUserClasses userClasses = 
   do putStrLn "Classes: "
@@ -66,7 +61,7 @@ prFields fields =
 prMtype mtype =
   do putStrLn "Method Types:"
      mapM_ putStrLn 
-       $ map (\(c,m,targs, tret, attrs) ->
+       $ map (\(c,m,targs, tret, attrs, args, maybestmt) ->
                " - " ++ c ++ "," ++ m ++ " : " ++ 
                (concat $ intersperse "/" attrs ++ [" "] ++
                 ["("] ++ 
@@ -74,14 +69,14 @@ prMtype mtype =
                " --> " ++ show tret) mtype
      putStrLn ""
 
-prMbody mbody =     
-  do putStrLn "Method bodies:"
-     putStrLn $ " - " ++ " *** skip printing *** "
-     putStrLn ""
+-- prMbody mbody =     
+--   do putStrLn "Method bodies:"
+--      putStrLn $ " - " ++ " *** skip printing *** "
+--      putStrLn ""
 
 -- 1. Gather type information
 initTypeCheck :: Program -> Info     
-initTypeCheck cs = (userClasses, inheritance, fields, mtype, mbody)
+initTypeCheck cs = (userClasses, inheritance, fields, mtype)
   where
     userClasses = map fclass cs 
     fclass (Class attrs c _ _ _) = (c, [java_class])
@@ -98,7 +93,7 @@ initTypeCheck cs = (userClasses, inheritance, fields, mtype, mbody)
     
     fields = [ (c, mkFields cs userClasses c) | (c, _) <- userClasses]
     mtype  = concat [ mkMtype cs userClasses c | (c, _) <- userClasses ]
-    mbody  = concat [ mkMbody cs userClasses c | (c, _) <- userClasses ]
+    -- mbody  = concat [ mkMbody cs userClasses c | (c, _) <- userClasses ]
 
 
 getClassDef cs c = 
@@ -142,7 +137,7 @@ mkMtype cs ucs c =
      then mkMtype' cs ucs c 
      else mkMtype'' cs ucs c
      
-mkMtype' cs ucs c = dxs -- ++ dxs1 ++ dxs2
+mkMtype' cs ucs c = dxs
   where
     (maybec, is, mdecls) =
       case getClassDef cs c of
@@ -151,45 +146,32 @@ mkMtype' cs ucs c = dxs -- ++ dxs1 ++ dxs2
 
     dxs   = concat [ fmdecl mdecl | mdecl <- mdecls]
             
-    fmdecl (MethodDecl attrs d m args _) = [(c, m, map fst args, d, attrs)]
-    fmdecl (ConstrDecl dn args _) = [(c, c, map fst args, TypeName dn, [])]
-    fmdecl (AbstractMethodDecl d m args) = [(c, m, map fst args, d, [abstract])]
+    fmdecl (MethodDecl attrs d m args s) = 
+      [(c, m, map fst args, d, attrs, map snd args, Just s)]
+    fmdecl (ConstrDecl dn args s)        = 
+      [(c, c, map fst args, TypeName dn, [], map snd args, Just s)]
+    fmdecl (AbstractMethodDecl d m args) = 
+      [(c, m, map fst args, d, [abstract], map snd args, Nothing)]
     fmdecl (FieldDecl _ _ _ _)           = []
-    
-    dxs1  = [ (c, m, tyns, d, attrs) 
-            | (_, m, tyns, d, attrs) <- dxs1' ++ dxs2, notin m dxs]
-    dxs1' = if isJust maybec 
-            then mkMtype cs ucs (fromJust maybec)
-            else []
-    dxs2  = concat [ mkMtype cs ucs i | i <- is ]
-      
-    notin m dxs = and [ m /= m' | (_, m', _, _, _) <- dxs ] -- TODO: subtype?
     
 mkMtype'' cs ucs c = mtypes
   where
-    mtypes = [ (c, m,argtys, retty, attrs) 
-             | (c', m, argtys, retty, attrs) <- basicMtypes, c == c']
+    mtypes = [ (c, m,argtys, retty, attrs, args, maybestmt) 
+             | (c', m, argtys, retty, attrs, args, maybestmt) <- basicMtypes, c == c']
 
-mkMbody cs ucs c = dxs -- ++ dxs1
-  where
-    (maybec, is, mdecls) =
-      case getClassDef cs c of
-        Class _ _ maybec is mdecls -> (maybec, is, mdecls)
-        Interface _ is mdecls -> (Nothing, is, mdecls)
+-- mkMbody cs ucs c = dxs
+--   where
+--     (maybec, is, mdecls) =
+--       case getClassDef cs c of
+--         Class _ _ maybec is mdecls -> (maybec, is, mdecls)
+--         Interface _ is mdecls -> (Nothing, is, mdecls)
 
-    dxs   = concat [fmdecl mdecl | mdecl <- mdecls]
+--     dxs   = concat [fmdecl mdecl | mdecl <- mdecls]
             
-    fmdecl (MethodDecl attrs d m args s) = [(c, m, args, s)]
-    fmdecl (ConstrDecl dn args s)        = [(c, c, args, s)]
-    fmdecl (AbstractMethodDecl d m args) = []
-    fmdecl (FieldDecl _ _ _ _)           = []
-    
-    dxs1  = [(c, m, args, s) | (_,m,args,s) <- dxs1' ++ dxs2, notin m dxs]
-    dxs1' = if isJust maybec 
-            then mkMbody cs ucs (fromJust maybec)
-            else []
-    dxs2  = concat [ mkMbody cs ucs i | i <- is ]
-    notin m dxs = and [ m /= m' | (_, m', _, _) <- dxs ] -- TODO: subtype?
+--     fmdecl (MethodDecl attrs d m args s) = [(c, m, args, s)]
+--     fmdecl (ConstrDecl dn args s)        = [(c, c, args, s)]
+--     fmdecl (AbstractMethodDecl d m args) = []
+--     fmdecl (FieldDecl _ _ _ _)           = []
     
 isUserClass c ucs =     
   not $ null $ 
@@ -359,7 +341,7 @@ lookupMtype' info c m argtys =
 
 lookupMtype'' info c m argtys mtypes inheritance =
   case [ (argtys', retty, attrs) 
-       | (c', m', argtys', retty, attrs) <- mtypes, 
+       | (c', m', argtys', retty, attrs, _, _) <- mtypes, 
          c == c', 
          m == m',
          subTypes info argtys argtys'
@@ -410,7 +392,7 @@ lookupKtype' info c m argtys =
 
 lookupKtype'' info c m argtys mtypes inheritance =
   case [ (argtys', retty, attrs) 
-       | (c', m', argtys', retty, attrs) <- mtypes, 
+       | (c', m', argtys', retty, attrs, _, _) <- mtypes, 
          c == c', 
          m == m',
          subTypes info argtys argtys'

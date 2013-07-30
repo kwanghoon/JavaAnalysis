@@ -8,10 +8,23 @@ abstract  = "abstract"
 java_class    = "class"
 java_interface = "interface"
 
---
-type Name = String
+-- For typechecking
+type UserClasses = [(Name, [Attrib])]
+type Inheritance = [(Name,Name)]
+type Fields      = [(Name, [(TypeName, Name, [Attrib])])]
+type Mtypes      = [(Name, Name, [TypeName], TypeName, [Attrib], [Name], Maybe Stmt)]
+-- type Mbodies     = [(Name, Name, ArgDecls, Stmt)]
 
-type Attrib = String
+type Info = (UserClasses, Inheritance, Fields, Mtypes)
+
+getUserClasses (userClasses, inheritance, fields, mtype) = userClasses 
+getInheritance (userClasses, inheritance, fields, mtype) = inheritance
+getFields      (userClasses, inheritance, fields, mtype) = fields
+getMtype       (userClasses, inheritance, fields, mtype) = mtype
+
+--
+type Name     = String
+type Attrib   = String
 
 --
 type Program = [Class]

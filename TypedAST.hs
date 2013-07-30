@@ -1,11 +1,19 @@
 module TypedAST where
 
-import AST (Name, Attrib, TypeName)
+import AST (Name, Attrib, TypeName, UserClasses, Inheritance, Fields, Stmt)
 
-type UniqueId     = Int
+--  
+type UniqueId     = Integer
 type ObjAllocSite = UniqueId
 type Ctx          = [ObjAllocSite]
-  
+
+-- 
+type TypedMtypes = 
+  [(Name, Name, UniqueId, [TypeName], TypeName, [Attrib], [Name], Maybe Stmt)]
+
+type TypedInfo = (UserClasses, Inheritance, Fields, TypedMtypes)
+
+--
 type AnnoTypeName = (TypeName, Ctx)
 type AnnoName     = (Name, Ctx)
 type NameUnique   = (Name, UniqueId)
@@ -29,14 +37,14 @@ data TypedMemberDecl =
 type TypedInitializer = TypedExpr
 
 data TypedExpr = 
-    TypedVar          AnnoName
-  | TypedField        TypedExpr NameUnique
-  | TypedStaticField  TypeName NameUnique
-  | TypedNew          AnnoTypeName [TypedExpr]
+    TypedVar          Name
+  | TypedField        TypedExpr Name
+  | TypedStaticField  TypeName Name
+  | TypedNew          TypeName [TypedExpr] ObjAllocSite
   | TypedAssign       TypedExpr TypedExpr
-  | TypedCast         AnnoTypeName TypedExpr
-  | TypedInvoke       TypedExpr NameUnique [TypedExpr]
-  | TypedStaticInvoke AnnoTypeName NameUnique [TypedExpr]
+  | TypedCast         TypeName TypedExpr
+  | TypedInvoke       TypedExpr Name [TypedExpr]
+  | TypedStaticInvoke TypeName Name [TypedExpr]
   | TypedConstTrue
   | TypedConstFalse
   | TypedConstNull

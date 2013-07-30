@@ -3,6 +3,7 @@ module Main where
 import AST
 import Parser
 import TypeCheck
+import Analysis
 -- import TypedAST
 import System.Environment
 import Data.List
@@ -15,7 +16,8 @@ run args =
   do css <- mapM parse args
      let cs = concat css
      putStrLn $ prprog $ cs
-     typecheck cs
+     info <- typecheck cs
+     doAnalysis cs info
           
 parse arg =           
   do s <- readFile arg
