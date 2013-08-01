@@ -6,6 +6,7 @@ import Data.Maybe
 import Data.List
 import Data.Either
 
+--
 typecheck program = 
   do let info = initTypeCheck program :: Info 
      maybetc <- tcProgram info program
@@ -113,7 +114,7 @@ mkFields cs ucs c =
 mkFields' cs ucs c = 
   if c == objClass 
   then []
-  else dxs -- ++ dxs1 ++ dxs2 -- TODO: duplicate fields
+  else dxs
   where
     (maybec, is, mdecls) =
       case getClassDef cs c of
@@ -159,20 +160,6 @@ mkMtype'' cs ucs c = mtypes
     mtypes = [ (c, m,argtys, retty, attrs, args, maybestmt) 
              | (c', m, argtys, retty, attrs, args, maybestmt) <- basicMtypes, c == c']
 
--- mkMbody cs ucs c = dxs
---   where
---     (maybec, is, mdecls) =
---       case getClassDef cs c of
---         Class _ _ maybec is mdecls -> (maybec, is, mdecls)
---         Interface _ is mdecls -> (Nothing, is, mdecls)
-
---     dxs   = concat [fmdecl mdecl | mdecl <- mdecls]
-            
---     fmdecl (MethodDecl attrs d m args s) = [(c, m, args, s)]
---     fmdecl (ConstrDecl dn args s)        = [(c, c, args, s)]
---     fmdecl (AbstractMethodDecl d m args) = []
---     fmdecl (FieldDecl _ _ _ _)           = []
-    
 isUserClass c ucs =     
   not $ null $ 
   [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_class attribs ]
@@ -243,7 +230,7 @@ tcProgram info program =
   do rs <- mapM (tcClass info) program
      return $ anyJust $ rs
      
-
+tcClass :: Info -> Class -> IO (Maybe String)
 tcClass info (Class attrs n p is mdecls) =
   do rs <- mapM (tcMdecl info (n, p, is)) mdecls
      return $ anyJust $ rs
@@ -251,7 +238,7 @@ tcClass info (Interface n is mdecls) =
   do rs <- mapM (tcMdecl info (n, Nothing, is)) mdecls -- TODO: all abstract?
      return $ anyJust $ rs
 
-
+tcMdecl :: Info -> (Name, Maybe Name, [Name]) -> MemberDecl -> IO (Maybe String)
 tcMdecl info (c,p,is) (AbstractMethodDecl retty m targs) =
   do return $ Nothing
                        
@@ -288,6 +275,8 @@ tcMdecl info (c,p,is) (FieldDecl attrs t v maybei) =
                      else return $ Nothing
                           
                           
+--
+tcExps :: Info -> (TypingCtx, TypingEnv) -> [Expr] -> IO (Either TypeName String)
 tcExps info env [] = return (Left (TypeName "void"))
 tcExps info env [exp] = tcExp info env exp
 tcExps info env (exp:exps) = 
@@ -422,6 +411,7 @@ isSuperCall (Expr (Prim "super" es)) = True
 isSuperCall _                        = False
 
 --
+tcExp :: Info -> (TypingCtx, TypingEnv) -> Expr -> IO (Either TypeName String)
 tcExp info env (Var x) =
   do let maybet = lookupEnv env x
      if isNothing maybet

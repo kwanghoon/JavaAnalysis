@@ -6,6 +6,7 @@ import AST (Name, Attrib, TypeName, UserClasses, Inheritance, Fields, Stmt)
 type UniqueId     = Integer
 type ObjAllocSite = UniqueId
 type Ctx          = [ObjAllocSite]
+data Set          = Set [UniqueId]
 
 -- 
 type TypedMtypes = 

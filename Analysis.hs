@@ -7,7 +7,7 @@ import Control.Monad.Trans (liftIO)
 import Control.Monad.Writer (WriterT, tell, runWriterT)
 
 type Constraint  = (Ctx, UniqueId)
-type Constraints = [(Ctx, UniqueId)]
+type Constraints = [Constraint]
 
 doAnalysis :: Program -> Info -> IO ()
 doAnalysis program info = do
@@ -37,4 +37,14 @@ analysis program info = do
   tell [([1,2,3,4,5],6)]
   liftIO . putStrLn $ "print something..."
   
+aClass :: TypedInfo -> WriterT Constraints IO ()  
+aClass info = do
+  liftIO . return $ ()
 
+aMdecl :: TypedInfo -> (Name, Maybe Name, [Name]) -> MemberDecl -> WriterT Constraints IO ()
+aMdecl info triple mdecl = do
+  liftIO . return $ ()
+  
+aExp :: TypedInfo -> (TypingCtx, TypingEnv) -> Expr -> WriterT Constraints IO ()
+aExp info env e = do
+  liftIO . return $ ()

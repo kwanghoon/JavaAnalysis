@@ -13,7 +13,6 @@ type UserClasses = [(Name, [Attrib])]
 type Inheritance = [(Name,Name)]
 type Fields      = [(Name, [(TypeName, Name, [Attrib])])]
 type Mtypes      = [(Name, Name, [TypeName], TypeName, [Attrib], [Name], Maybe Stmt)]
--- type Mbodies     = [(Name, Name, ArgDecls, Stmt)]
 
 type Info = (UserClasses, Inheritance, Fields, Mtypes)
 
@@ -21,6 +20,9 @@ getUserClasses (userClasses, inheritance, fields, mtype) = userClasses
 getInheritance (userClasses, inheritance, fields, mtype) = inheritance
 getFields      (userClasses, inheritance, fields, mtype) = fields
 getMtype       (userClasses, inheritance, fields, mtype) = mtype
+
+type TypingEnv = [(Name, TypeName)]
+type TypingCtx = (Name, Maybe Name, [Name], Maybe Name)
 
 --
 type Name     = String
