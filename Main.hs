@@ -14,7 +14,7 @@ main =
      
 run args =
   do css <- mapM parse args
-     let cs = concat css
+     let cs = numProgram $ concat $ css
      putStrLn $ prprog $ cs
      info <- typecheck cs
      doAnalysis cs info

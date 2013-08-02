@@ -107,6 +107,8 @@ opt (Just x) f = f x
 list [] f = (++) ""
 list xs f = f xs
 
+comment s = conc ["//", " ", s]
+
 -- delimeter (Ite _ _ _) = ""
 -- delimeter (LocalVarDecl _ _ _) = ""
 -- delimeter _ = ";\n"
@@ -186,14 +188,16 @@ instance Show Stmt where
   
   
 instance Show MemberDecl where
-  showsPrec p (MethodDecl attrs c m _ params s) = 
+  showsPrec p (MethodDecl attrs c m id params s) = 
     tabstop p . conc (comma attrs) .
     cond attrs " " .
-    conc [show c, " ", m, "(", argsdecl params, ")", " ", "{", "\n"] .
+    conc [show c, " ", m, "(", argsdecl params, ")", " ", "{", " "] .  
+    comment (show id) . conc ["\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
-  showsPrec p (ConstrDecl k _ params s) = 
-    tabstop p . conc [k, "(", argsdecl params, ")", " ", "{", "\n"] .
+  showsPrec p (ConstrDecl k id params s) = 
+    tabstop p . conc [k, "(", argsdecl params, ")", " ", "{", " "] .
+    comment (show id) . conc ["\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
   showsPrec p (FieldDecl attrs c x maybei) = 
@@ -201,8 +205,11 @@ instance Show MemberDecl where
     conc [show c, " ", x] . 
     opt maybei (\i -> conc ["=", show i]) .
     conc [";", "\n"]
-  showsPrec p (AbstractMethodDecl c m _ params) = 
-    tabstop p . conc [show c, " ", m, "(", argsdecl params, ")", " ", ";", "\n"]
+  showsPrec p (AbstractMethodDecl c m id params) = 
+    tabstop p . 
+    conc [show c, " ", m, "(", argsdecl params, ")", " ", ";", " "] . 
+    comment (show id) .
+    conc ["\n"]
     
 instance Show Class where
   showsPrec p (Class attrs c maybepc is mdecl) =
@@ -221,3 +228,21 @@ instance Show Class where
     combine (map (showsPrec (p+1)) mdecl) .
     conc ["}", "\n"]
 
+-- Numbering Methods and Local Variables
+numProgram program = [ numClass c | c <- program ]
+
+numClass (Class attrs n pn ins mdecls) = 
+  Class attrs n pn ins (numMdecls mdecls)
+numClass (Interface n ins mdecls) =  
+  Interface n ins (numMdecls mdecls)
+  
+numMdecls mdecls = [ numMdecl mdecl id | (mdecl,id) <- zip mdecls [1..] ]
+
+numMdecl (MethodDecl attrs retty n _ argdecls stmt) id = 
+  MethodDecl attrs retty n id argdecls stmt
+numMdecl (ConstrDecl n _ argdecls stmt) id =
+  ConstrDecl n id argdecls stmt
+numMdecl (FieldDecl attrs ty n maybee) id =
+  FieldDecl attrs ty n maybee
+numMdecl (AbstractMethodDecl ty n _ argdecls) id =
+  AbstractMethodDecl ty n id argdecls

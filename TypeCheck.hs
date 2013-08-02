@@ -8,7 +8,7 @@ import Data.Either
 
 --
 typecheck program = 
-  do let info = initTypeCheck program :: Info 
+  do let info = initTypeCheck program
      maybetc <- tcProgram info program
      prTCResult info maybetc
      return info
@@ -66,11 +66,6 @@ prMtypes mtypes =
                 (intersperse ", " $ map show $ targs) ++ [")"]) ++
                " --> " ++ show tret) mtypes
      putStrLn ""
-
--- prMbody mbody =     
---   do putStrLn "Method bodies:"
---      putStrLn $ " - " ++ " *** skip printing *** "
---      putStrLn ""
 
 -- 1. Gather type information
 initTypeCheck :: Program -> Info
@@ -141,15 +136,15 @@ mkMtype' cs ucs c = dxs
         Class _ _ maybec is mdecls -> (maybec, is, mdecls)
         Interface _ is mdecls -> (Nothing, is, mdecls)
 
-    dxs   = concat [ fmdecl mdecl id | (mdecl,id) <- zip mdecls [1..]]
+    dxs   = concat [ fmdecl mdecl | mdecl <- mdecls]
             
-    fmdecl (MethodDecl attrs d m _ args s) id = 
+    fmdecl (MethodDecl attrs d m id args s) = 
       [(c, m, id, map fst args, d, attrs, map snd args, Just s)]
-    fmdecl (ConstrDecl dn _ args s) id        = 
+    fmdecl (ConstrDecl dn id args s)        = 
       [(c, c, id, map fst args, TypeName dn, [], map snd args, Just s)]
-    fmdecl (AbstractMethodDecl d m _ args) id = 
+    fmdecl (AbstractMethodDecl d m id args) = 
       [(c, m, id, map fst args, d, [abstract], map snd args, Nothing)]
-    fmdecl (FieldDecl _ _ _ _) id           = []
+    fmdecl (FieldDecl _ _ _ _)              = []
     
 mkMtype'' cs ucs c = mtypes
   where
@@ -164,6 +159,7 @@ isUserClass c ucs =
 isUserInterface c ucs =     
   not $ null $ 
   [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_interface attribs ]
+
 
 -- 2. Do typecheck
     
