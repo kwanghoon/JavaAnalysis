@@ -50,7 +50,9 @@ type MemberDecls = [MemberDecl]
 
 data TypeName = TypeName Name | ArrayTypeName TypeName
   
-type ArgDecls = [(TypeName, Name)]
+type ArgDecls = [(TypeName, Name, UniqueId)]
+
+getIdOfVar (ty, n, id) = id
 
 data MemberDecl = MethodDecl [Attrib] TypeName Name UniqueId ArgDecls Stmt
                 | ConstrDecl Name UniqueId ArgDecls Stmt
@@ -77,12 +79,12 @@ data Expr = Var Name
             
 data Stmt = Expr Expr
           | Ite Expr Stmt Stmt
-          | LocalVarDecl TypeName Name (Maybe Expr)
+          | LocalVarDecl TypeName Name UniqueId (Maybe Expr)
           | Return (Maybe Expr)
           | Seq Stmt Stmt
           | NoStmt
           | While Expr Stmt
-          | For (Maybe TypeName) Name Expr Expr Expr Stmt
+          | For (Maybe (TypeName, UniqueId)) Name Expr Expr Expr Stmt
           | Block Stmt
             
 toStmt []           = NoStmt
@@ -98,8 +100,7 @@ cond [] s = id
 cond _  s = (++) s
 
 comma = intersperse "," 
-argsdecl cxs = concat $ comma [ conc [show c, " ", x] "" | (c,x) <- cxs ]
---seqEs p es = combine [ showsPrec p e . conc [delimeter e] | e <- es ]
+argsdecl cxns = concat $ comma [ conc [show c, " ", x] "" | (c,x,n) <- cxns ]
 
 opt Nothing  f = (++) ""
 opt (Just x) f = f x
@@ -161,10 +162,12 @@ instance Show Stmt where
                                . tabstop p . conc ["else", "\n"]
                                . showsPrec (p+1) s2
                                . tabstop p . conc ["\n"]
-  showsPrec p (LocalVarDecl c x maybee) = 
+  showsPrec p (LocalVarDecl c x n maybee) = 
     tabstop p . conc [show c, " ", x] . 
     opt maybee (\e -> conc ["=", show e]) .
-    conc [ ";", "\n"]
+    conc [ ";", " "] . 
+    comment (show n) .
+    conc ["\n"]
   showsPrec p (Return maybee) = 
     tabstop p . conc [ "return "] .
     opt maybee (\e -> conc [show e]) . 
@@ -175,10 +178,12 @@ instance Show Stmt where
     tabstop p . conc [ "while", "(", show e, ")", "\n" ] .
     showsPrec (p+1) s .
     tabstop p . conc [ "\n" ]
-  showsPrec p (For maybety x e1 e2 e3 s) = 
+  showsPrec p (For maybetyn x e1 e2 e3 s) = 
     tabstop p . conc [ "for", "(" ] .
-    opt maybety (\ty -> conc [show ty, " "]) .
-    conc [  x, "=", show e1, ";", " ", show e2, ";", " ", show e3, ")", "\n"] .
+    opt maybetyn (\(ty,_) -> conc [show ty, " "]) .
+    conc [  x, "=", show e1, ";", " ", show e2, ";", " ", show e3, ")", " "] . 
+    opt maybetyn (\(_,n) -> comment (show n)) .
+    conc ["\n"] .
     showsPrec (p+1) s .
     tabstop p . conc [ "\n" ]
   showsPrec p (Block s) = 
@@ -192,12 +197,16 @@ instance Show MemberDecl where
     tabstop p . conc (comma attrs) .
     cond attrs " " .
     conc [show c, " ", m, "(", argsdecl params, ")", " ", "{", " "] .  
-    comment (show id) . conc ["\n"] .
+    comment (show id) . conc [" "] .
+    conc [show $ map getIdOfVar $ params] .
+    conc ["\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
   showsPrec p (ConstrDecl k id params s) = 
     tabstop p . conc [k, "(", argsdecl params, ")", " ", "{", " "] .
-    comment (show id) . conc ["\n"] .
+    comment (show id) . conc [" "] .
+    conc [show $ map getIdOfVar $ params] .
+    conc ["\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
   showsPrec p (FieldDecl attrs c x maybei) = 
@@ -208,7 +217,8 @@ instance Show MemberDecl where
   showsPrec p (AbstractMethodDecl c m id params) = 
     tabstop p . 
     conc [show c, " ", m, "(", argsdecl params, ")", " ", ";", " "] . 
-    comment (show id) .
+    comment (show id) . conc [" "] .
+    conc [show $ map getIdOfVar $ params] .
     conc ["\n"]
     
 instance Show Class where
@@ -238,11 +248,58 @@ numClass (Interface n ins mdecls) =
   
 numMdecls mdecls = [ numMdecl mdecl id | (mdecl,id) <- zip mdecls [1..] ]
 
+-- We assume the local variable 'this' gets the number 0.
 numMdecl (MethodDecl attrs retty n _ argdecls stmt) id = 
-  MethodDecl attrs retty n id argdecls stmt
+  MethodDecl attrs retty n id argdecls' stmt'
+  where
+    (argdecls', n') = numArgDecls argdecls 1
+    (stmt', _)      = numStmt stmt n'
 numMdecl (ConstrDecl n _ argdecls stmt) id =
-  ConstrDecl n id argdecls stmt
+  ConstrDecl n id argdecls' stmt'
+  where
+    (argdecls', n') = numArgDecls argdecls 1
+    (stmt', _)      = numStmt stmt n'
 numMdecl (FieldDecl attrs ty n maybee) id =
   FieldDecl attrs ty n maybee
 numMdecl (AbstractMethodDecl ty n _ argdecls) id =
-  AbstractMethodDecl ty n id argdecls
+  AbstractMethodDecl ty n id argdecls'
+  where
+    (argdecls', n') = numArgDecls argdecls 1
+
+numArgDecls argdecls n = (argdecls', n')
+  where
+    argdecls' = [ (ty,x,i) | ((ty, x, _),i) <- zip argdecls [n..] ]
+    n'        = n + len argdecls
+    
+    len []     = 0
+    len (x:xs) = 1 + len xs
+
+numStmt :: Stmt -> UniqueId -> (Stmt, UniqueId)
+numStmt (Expr e) n      = (Expr e, n)
+numStmt (Ite e s1 s2) n = (Ite e s1' s2', n'')
+  where
+    (s1',n')  = numStmt s1 n
+    (s2',n'') = numStmt s2 n'
+numStmt (LocalVarDecl ty x _ maybee) n = (LocalVarDecl ty x n maybee, n+1)
+numStmt (Return maybee) n = (Return maybee, n)
+numStmt (Seq s1 s2) n = (Seq s1' s2', n'')
+  where
+    (s1',n')  = numStmt s1 n
+    (s2',n'') = numStmt s2 n'
+numStmt (NoStmt) n = (NoStmt, n)  
+numStmt (While e s) n = (While e s', n')
+  where
+    (s',n')  = numStmt s n
+numStmt (For maybetyn x e1 e2 e3 s) n = (For maybetyn' x e1 e2 e3 s', n')    
+  where
+    (maybetyn',n1) =
+      case maybetyn of
+        Nothing -> (Nothing, n)
+        Just (ty,_) -> (Just (ty,n), n+1)
+        
+    (s',n') = numStmt s n1
+numStmt (Block s) n = (Block s', n')
+  where
+    (s',n') = numStmt s n
+                     
+

@@ -175,16 +175,16 @@ blockstmts
 stmt    : expr ';'  { Expr $1 }
         | if '(' expr ')' blockstmts                 { Ite $3 $5 NoStmt }
         | if '(' expr ')' blockstmts else stmt { Ite $3 $5 $7 }
-        | final type var '=' expr ';' { LocalVarDecl $2 $3 (Just $5) }
-        | type var '=' expr ';' { LocalVarDecl $1 $2 (Just $4) }
-        | type var ';'          { LocalVarDecl $1 $2 Nothing }
+        | final type var '=' expr ';' { LocalVarDecl $2 $3 0 (Just $5) }
+        | type var '=' expr ';' { LocalVarDecl $1 $2 0 (Just $4) }
+        | type var ';'          { LocalVarDecl $1 $2 0 Nothing }
         | return ';'      { Return Nothing }
         | return expr ';' { Return (Just $2) }
         | while '(' expr ')' blockstmts   { While $3 $5 }
         | for '(' var '=' expr ';' expr ';' expr ')' blockstmts
            { For Nothing $3 $5 $7 $9 $11 }
         | for '(' type var '='  expr ';' expr ';' expr ')' blockstmts
-	   { For (Just $3) $4 $6 $8 $10 $12 }
+	   { For (Just ($3,0) ) $4 $6 $8 $10 $12 }
         | ';'  { NoStmt }
         | blockstmts { $1 }
 
@@ -210,8 +210,8 @@ varDecl	: 		                { [] }
         | varDeclTheRest		{ $1 }
 
 varDeclTheRest
-        : optFinal type var                       { [($2, $3)] }
-        | optFinal type var ',' varDeclTheRest	{ ($2, $3) : $5 }
+        : optFinal type var                     { [($2, $3, 0)] }
+        | optFinal type var ',' varDeclTheRest	{ ($2, $3, 0) : $5 }
 
 exprs   :                               { [] }
         | therestexprs                  { $1 }

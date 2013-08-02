@@ -137,13 +137,16 @@ mkMtype' cs ucs c = dxs
         Interface _ is mdecls -> (Nothing, is, mdecls)
 
     dxs   = concat [ fmdecl mdecl | mdecl <- mdecls]
+    
+    fst3 (f,s,t) = f
+    snd3 (f,s,t) = s
             
     fmdecl (MethodDecl attrs d m id args s) = 
-      [(c, m, id, map fst args, d, attrs, map snd args, Just s)]
+      [(c, m, id, map fst3 args, d, attrs, map snd3 args, Just s)]
     fmdecl (ConstrDecl dn id args s)        = 
-      [(c, c, id, map fst args, TypeName dn, [], map snd args, Just s)]
+      [(c, c, id, map fst3 args, TypeName dn, [], map snd3 args, Just s)]
     fmdecl (AbstractMethodDecl d m id args) = 
-      [(c, m, id, map fst args, d, [abstract], map snd args, Nothing)]
+      [(c, m, id, map fst3 args, d, [abstract], map snd3 args, Nothing)]
     fmdecl (FieldDecl _ _ _ _)              = []
     
 mkMtype'' cs ucs c = mtypes
@@ -237,7 +240,7 @@ tcMdecl info (c,p,is) (AbstractMethodDecl retty m _ targs) =
                        
 tcMdecl info (c,p,is) (MethodDecl attrs retty m _ targs stmt) = 
   do let env = ((c, p, is, Just m), 
-                ("this", TypeName c) : [(x,c) | (c, x) <- targs])
+                ("this", TypeName c) : [(x,c) | (c, x, _) <- targs])
      either1 <- tcBeginStmt info env retty stmt
      let env1 = fromLeft either1
      if isRight either1
@@ -391,10 +394,10 @@ getCurrentClass ((c,p,is,m),tyenv) = c
 getParentClass ((c,Just d,is,m),tyenv)  = d
 getParentClass ((c,Nothing,is,m),tyenv) = "Object"
 
-firstStmt (Expr e)           = Just (Expr e, [])
-firstStmt (Ite cond s1 s2)   = Just (Ite cond s1 s2, [])
-firstStmt (LocalVarDecl t x maybee) = Just (LocalVarDecl t x maybee, [])
-firstStmt (Return maybee)    = Just (Return maybee, [])
+firstStmt (Expr e)                    = Just (Expr e, [])
+firstStmt (Ite cond s1 s2)            = Just (Ite cond s1 s2, [])
+firstStmt (LocalVarDecl t x n maybee) = Just (LocalVarDecl t x n maybee, [])
+firstStmt (Return maybee)             = Just (Return maybee, [])
 firstStmt (Seq s1 s2) = 
   let (stmt1,therest) = fromJust $ firstStmt s1 -- TODO: Make sure that s1 contains no NoStmt
   in  Just (stmt1, [toStmt $ therest ++ [s1]])
@@ -635,7 +638,7 @@ tcStmt info env retty (Ite cond s1 s2) =
                                 show (Ite cond s1 s2)
                     else return $ Left  $ env'
 
-tcStmt info env retty (LocalVarDecl tn x maybee) = 
+tcStmt info env retty (LocalVarDecl tn x id maybee) = 
   do let e = fromJust maybee
      let env' = update env x tn 
      if isNothing maybee 
@@ -678,9 +681,9 @@ tcStmt info env retty (Seq s1 s2) =
 
 tcStmt info env retty (NoStmt) = return $ Left $ env
 
-tcStmt info env retty (For maybety x init cond upd s) =
-  do let ty = fromJust maybety
-     let env' = if isJust maybety then update env x ty else env
+tcStmt info env retty (For maybetyn x init cond upd s) =
+  do let (ty,n) = fromJust maybetyn
+     let env' = if isJust maybetyn then update env x ty else env
      eitherinit <- tcExp info env' (Assign (Var x) init)
      eitherbool <- tcExp info env' cond
      eitherupd  <- tcExp info env' upd
