@@ -127,12 +127,12 @@ F       : type var ';'            { \attr -> FieldDecl attr $1 $2 Nothing }
         | type var '=' expr  ';'  { \attr -> FieldDecl attr $1 $2 (Just $4) }
 
 M       : type var '(' varDecl ')' '{' stmts '}' 
-           { \attr -> MethodDecl attr $1 $2 $4 (toStmt $7) }
+           { \attr -> MethodDecl attr $1 $2 0 $4 (toStmt $7) }
 
 abstractM
-        : type var '(' varDecl ')' ';'  { AbstractMethodDecl $1 $2 $4 }
+        : type var '(' varDecl ')' ';'  { AbstractMethodDecl $1 $2 0 $4 }
 
-K       : classname '(' varDecl ')' '{' stmts '}' { ConstrDecl $1 $3 (toStmt $6) }
+K       : classname '(' varDecl ')' '{' stmts '}' { ConstrDecl $1 0 $3 (toStmt $6) }
 
 expr    : var '(' exprs ')' { Prim $1 $3 }
         | arg equal arg    { Prim "==" [$1, $3] }

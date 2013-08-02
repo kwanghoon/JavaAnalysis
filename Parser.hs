@@ -14,7 +14,7 @@ import AST
 
 dummy_var_name = "$d"
 
--- parser produced by Happy Version 1.18.6
+-- parser produced by Happy Version 1.18.10
 
 data HappyAbsSyn t4 t5 t6 t7 t8 t9 t10 t11 t12 t13 t14 t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29 t30 t31 t32 t33 t34 t35 t36 t37 t38 t39 t40
 	= HappyTerminal (Token)
@@ -1637,7 +1637,7 @@ happyReduction_25 (_ `HappyStk`
 	(HappyAbsSyn34  happy_var_1) `HappyStk`
 	happyRest)
 	 = HappyAbsSyn17
-		 (\attr -> MethodDecl attr happy_var_1 happy_var_2 happy_var_4 (toStmt happy_var_7)
+		 (\attr -> MethodDecl attr happy_var_1 happy_var_2 0 happy_var_4 (toStmt happy_var_7)
 	) `HappyStk` happyRest
 
 happyReduce_26 = happyReduce 6 18 happyReduction_26
@@ -1649,7 +1649,7 @@ happyReduction_26 (_ `HappyStk`
 	(HappyAbsSyn34  happy_var_1) `HappyStk`
 	happyRest)
 	 = HappyAbsSyn18
-		 (AbstractMethodDecl happy_var_1 happy_var_2 happy_var_4
+		 (AbstractMethodDecl happy_var_1 happy_var_2 0 happy_var_4
 	) `HappyStk` happyRest
 
 happyReduce_27 = happyReduce 7 19 happyReduction_27
@@ -1662,7 +1662,7 @@ happyReduction_27 (_ `HappyStk`
 	(HappyTerminal (TokenClassType happy_var_1)) `HappyStk`
 	happyRest)
 	 = HappyAbsSyn19
-		 (ConstrDecl happy_var_1 happy_var_3 (toStmt happy_var_6)
+		 (ConstrDecl happy_var_1 0 happy_var_3 (toStmt happy_var_6)
 	) `HappyStk` happyRest
 
 happyReduce_28 = happyReduce 4 20 happyReduction_28
@@ -2400,7 +2400,8 @@ happyNewToken action sts stk (tk:tks) =
 	_ -> happyError' (tk:tks)
 	}
 
-happyError_ tk tks = happyError' (tk:tks)
+happyError_ 87 tk tks = happyError' tks
+happyError_ _ tk tks = happyError' (tk:tks)
 
 newtype HappyIdentity a = HappyIdentity a
 happyIdentity = HappyIdentity
@@ -2762,9 +2763,10 @@ happyGoto action j tk st = action j j tk (HappyState action)
 -- Error recovery ((1) is the error token)
 
 -- parse error if we are in recovery and we fail again
-happyFail  (1) tk old_st _ stk =
+happyFail (1) tk old_st _ stk@(x `HappyStk` _) =
+     let (i) = (case x of { HappyErrorToken (i) -> i }) in
 --	trace "failing" $ 
-    	happyError_ tk
+        happyError_ i tk
 
 {-  We don't need state discarding for our restricted implementation of
     "error".  In fact, it can cause some bogus parses, so I've disabled it
@@ -2812,7 +2814,7 @@ happyDontSeq a b = b
 -- of deciding to inline happyGoto everywhere, which increases the size of
 -- the generated parser quite a bit.
 
-{-# LINE 311 "templates/GenericTemplate.hs" #-}
+{-# LINE 312 "templates/GenericTemplate.hs" #-}
 {-# NOINLINE happyShift #-}
 {-# NOINLINE happySpecReduce_0 #-}
 {-# NOINLINE happySpecReduce_1 #-}

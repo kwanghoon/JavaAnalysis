@@ -3,6 +3,12 @@ module AST where
 import Data.List
 
 --
+type UniqueId     = Integer
+type ObjAllocSite = UniqueId
+type Ctx          = [ObjAllocSite]
+data Set          = Set [UniqueId]
+
+--
 static    = "static"
 abstract  = "abstract"
 java_class    = "class"
@@ -11,8 +17,9 @@ java_interface = "interface"
 -- For typechecking
 type UserClasses = [(Name, [Attrib])]
 type Inheritance = [(Name,Name)]
-type Fields      = [(Name, [(TypeName, Name, [Attrib])])]
-type Mtypes      = [(Name, Name, [TypeName], TypeName, [Attrib], [Name], Maybe Stmt)]
+type Fields      = [(ClassName, [(TypeName, FieldName, [Attrib])])]
+type Mtypes      = [(ClassName, MethodName, UniqueId, [TypeName], TypeName, [Attrib], [VarName], Maybe Stmt)]
+type Vtypes      = [(ClassName, MethodName, UniqueId, TypeName, [Attrib], VarName)]
 
 type Info = (UserClasses, Inheritance, Fields, Mtypes)
 
@@ -22,11 +29,16 @@ getFields      (userClasses, inheritance, fields, mtype) = fields
 getMtype       (userClasses, inheritance, fields, mtype) = mtype
 
 type TypingEnv = [(Name, TypeName)]
-type TypingCtx = (Name, Maybe Name, [Name], Maybe Name)
+type TypingCtx = (ClassName, Maybe ClassName, [ClassName], Maybe MethodName)
 
 --
 type Name     = String
 type Attrib   = String
+
+type ClassName  = Name
+type MethodName = Name
+type FieldName  = Name
+type VarName    = Name
 
 --
 type Program = [Class]
@@ -40,10 +52,10 @@ data TypeName = TypeName Name | ArrayTypeName TypeName
   
 type ArgDecls = [(TypeName, Name)]
 
-data MemberDecl = MethodDecl [Attrib] TypeName Name ArgDecls Stmt
-                | ConstrDecl Name ArgDecls Stmt
+data MemberDecl = MethodDecl [Attrib] TypeName Name UniqueId ArgDecls Stmt
+                | ConstrDecl Name UniqueId ArgDecls Stmt
                 | FieldDecl [Attrib] TypeName Name (Maybe Initializer)
-                | AbstractMethodDecl TypeName Name ArgDecls -- TODO
+                | AbstractMethodDecl TypeName Name UniqueId ArgDecls -- TODO
 
 type Initializer = Expr
 
@@ -174,13 +186,13 @@ instance Show Stmt where
   
   
 instance Show MemberDecl where
-  showsPrec p (MethodDecl attrs c m params s) = 
+  showsPrec p (MethodDecl attrs c m _ params s) = 
     tabstop p . conc (comma attrs) .
     cond attrs " " .
     conc [show c, " ", m, "(", argsdecl params, ")", " ", "{", "\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
-  showsPrec p (ConstrDecl k params s) = 
+  showsPrec p (ConstrDecl k _ params s) = 
     tabstop p . conc [k, "(", argsdecl params, ")", " ", "{", "\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
@@ -189,7 +201,7 @@ instance Show MemberDecl where
     conc [show c, " ", x] . 
     opt maybei (\i -> conc ["=", show i]) .
     conc [";", "\n"]
-  showsPrec p (AbstractMethodDecl c m params) = 
+  showsPrec p (AbstractMethodDecl c m _ params) = 
     tabstop p . conc [show c, " ", m, "(", argsdecl params, ")", " ", ";", "\n"]
     
 instance Show Class where

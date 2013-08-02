@@ -20,9 +20,6 @@ prTCResult info maybetc = do
     else do prTyInfo info 
             putStrLn "Successfully typechecked..."
 
-     
--- getMbody (userClasses, inheritance, fields, mtype, mbody) = mbody
-
 -- 0. Print type information
 prTyInfo (userClasses, inheritance, fields, mtypes) =
   do prUserClasses userClasses
@@ -31,8 +28,8 @@ prTyInfo (userClasses, inheritance, fields, mtypes) =
      prInheritance basicInheritance
      prFields fields
      prFields basicFields
-     prMtype mtypes
-     prMtype basicMtypes
+     prMtypes mtypes
+     prMtypes basicMtypes
 --     prMbody mbodies
 
 prUserClasses userClasses = 
@@ -59,15 +56,15 @@ prFields fields =
                           show t ++ " " ++ v) fs)) $ fields
      putStrLn ""
 
-prMtype mtype =
+prMtypes mtypes =
   do putStrLn "Method Types:"
      mapM_ putStrLn 
-       $ map (\(c,m,targs, tret, attrs, args, maybestmt) ->
+       $ map (\(c, m, id, targs, tret, attrs, args, maybestmt) ->
                " - " ++ c ++ "," ++ m ++ " : " ++ 
                (concat $ intersperse "/" attrs ++ [" "] ++
                 ["("] ++ 
                 (intersperse ", " $ map show $ targs) ++ [")"]) ++
-               " --> " ++ show tret) mtype
+               " --> " ++ show tret) mtypes
      putStrLn ""
 
 -- prMbody mbody =     
@@ -76,8 +73,8 @@ prMtype mtype =
 --      putStrLn ""
 
 -- 1. Gather type information
-initTypeCheck :: Program -> Info     
-initTypeCheck cs = (userClasses, inheritance, fields, mtype)
+initTypeCheck :: Program -> Info
+initTypeCheck cs = (userClasses, inheritance, fields, mtypes)
   where
     userClasses = map fclass cs 
     fclass (Class attrs c _ _ _) = (c, [java_class])
@@ -93,8 +90,7 @@ initTypeCheck cs = (userClasses, inheritance, fields, mtype)
     fpcorobj (Nothing) = objClass
     
     fields = [ (c, mkFields cs userClasses c) | (c, _) <- userClasses]
-    mtype  = concat [ mkMtype cs userClasses c | (c, _) <- userClasses ]
-    -- mbody  = concat [ mkMbody cs userClasses c | (c, _) <- userClasses ]
+    mtypes = concat [ mkMtype cs userClasses c | (c, _) <- userClasses]
 
 
 getClassDef cs c = 
@@ -135,7 +131,7 @@ mkFields'' cs ucs c = concat mfields
   
 mkMtype cs ucs c =
   if isUserClass c ucs || isUserInterface c ucs
-     then mkMtype' cs ucs c 
+     then mkMtype' cs ucs c
      else mkMtype'' cs ucs c
      
 mkMtype' cs ucs c = dxs
@@ -145,20 +141,21 @@ mkMtype' cs ucs c = dxs
         Class _ _ maybec is mdecls -> (maybec, is, mdecls)
         Interface _ is mdecls -> (Nothing, is, mdecls)
 
-    dxs   = concat [ fmdecl mdecl | mdecl <- mdecls]
+    dxs   = concat [ fmdecl mdecl id | (mdecl,id) <- zip mdecls [1..]]
             
-    fmdecl (MethodDecl attrs d m args s) = 
-      [(c, m, map fst args, d, attrs, map snd args, Just s)]
-    fmdecl (ConstrDecl dn args s)        = 
-      [(c, c, map fst args, TypeName dn, [], map snd args, Just s)]
-    fmdecl (AbstractMethodDecl d m args) = 
-      [(c, m, map fst args, d, [abstract], map snd args, Nothing)]
-    fmdecl (FieldDecl _ _ _ _)           = []
+    fmdecl (MethodDecl attrs d m _ args s) id = 
+      [(c, m, id, map fst args, d, attrs, map snd args, Just s)]
+    fmdecl (ConstrDecl dn _ args s) id        = 
+      [(c, c, id, map fst args, TypeName dn, [], map snd args, Just s)]
+    fmdecl (AbstractMethodDecl d m _ args) id = 
+      [(c, m, id, map fst args, d, [abstract], map snd args, Nothing)]
+    fmdecl (FieldDecl _ _ _ _) id           = []
     
 mkMtype'' cs ucs c = mtypes
   where
-    mtypes = [ (c, m,argtys, retty, attrs, args, maybestmt) 
-             | (c', m, argtys, retty, attrs, args, maybestmt) <- basicMtypes, c == c']
+    mtypes = [ (c, m, id, argtys, retty, attrs, args, maybestmt) 
+             | (c', m, id, argtys, retty, attrs, args, maybestmt) <- basicMtypes
+             , c == c' ]
 
 isUserClass c ucs =     
   not $ null $ 
@@ -239,10 +236,10 @@ tcClass info (Interface n is mdecls) =
      return $ anyJust $ rs
 
 tcMdecl :: Info -> (Name, Maybe Name, [Name]) -> MemberDecl -> IO (Maybe String)
-tcMdecl info (c,p,is) (AbstractMethodDecl retty m targs) =
+tcMdecl info (c,p,is) (AbstractMethodDecl retty m _ targs) =
   do return $ Nothing
                        
-tcMdecl info (c,p,is) (MethodDecl attrs retty m targs stmt) = 
+tcMdecl info (c,p,is) (MethodDecl attrs retty m _ targs stmt) = 
   do let env = ((c, p, is, Just m), 
                 ("this", TypeName c) : [(x,c) | (c, x) <- targs])
      either1 <- tcBeginStmt info env retty stmt
@@ -256,8 +253,8 @@ tcMdecl info (c,p,is) (MethodDecl attrs retty m targs stmt) =
                                m ++ " of class " ++ c
           else return $ Nothing
        
-tcMdecl info (c,p,is) (ConstrDecl rettyn targs stmt) = -- TODO: it's own typing?
-  do tcMdecl info (c,p,is) (MethodDecl [] (TypeName rettyn) c targs stmt)
+tcMdecl info (c,p,is) (ConstrDecl rettyn id targs stmt) = -- TODO: it's own typing?
+  do tcMdecl info (c,p,is) (MethodDecl [] (TypeName rettyn) c id targs stmt)
     
 tcMdecl info (c,p,is) (FieldDecl attrs t v maybei) = 
   if isNothing maybei
@@ -330,7 +327,7 @@ lookupMtype' info c m argtys =
 
 lookupMtype'' info c m argtys mtypes inheritance =
   case [ (argtys', retty, attrs) 
-       | (c', m', argtys', retty, attrs, _, _) <- mtypes, 
+       | (c', m', id', argtys', retty, attrs, _, _) <- mtypes, 
          c == c', 
          m == m',
          subTypes info argtys argtys'
@@ -381,7 +378,7 @@ lookupKtype' info c m argtys =
 
 lookupKtype'' info c m argtys mtypes inheritance =
   case [ (argtys', retty, attrs) 
-       | (c', m', argtys', retty, attrs, _, _) <- mtypes, 
+       | (c', m', id', argtys', retty, attrs, _, _) <- mtypes, 
          c == c', 
          m == m',
          subTypes info argtys argtys'

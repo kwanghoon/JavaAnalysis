@@ -23,27 +23,45 @@ basicFields = -- TODO: extension
     ("System", [(TypeName "PrintStream", "out", [static])])
   ]
   
-basicMtypes = -- TODO: extension  
-  [ 
-    ("Set", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
-    ("Set", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
-    ("Set", "iterator", [], TypeName "Iterator", [], [], Nothing),
-    
-    ("HashSet", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
-    ("HashSet", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
-    ("HashSet", "iterator", [], TypeName "Iterator", [], [], Nothing),
-    
-    ("Iterator", "hasNext", [], TypeName "boolean", [], [], Nothing),
-    ("Iterator", "next", [], TypeName "Object", [], [], Nothing),
-    ("Iterator", "remove", [], TypeName "void", [], [], Nothing),
-    
-    ("StringBuilder", "StringBuilder", [], TypeName "StringBuilder", [], [], Nothing),
-    ("StringBuilder", "append", [TypeName "String"], TypeName "StringBuilder", [], [], Nothing),
-    ("StringBuilder", "append", [TypeName "char"], TypeName "StringBuilder", [], [], Nothing),
-    ("StringBuilder", "setLength", [TypeName "int"], TypeName "void", [], [], Nothing),
-    ("StringBuilder", "toString", [], TypeName "String", [], [], Nothing),
-    
-    ("String", "equals", [TypeName "String"], TypeName "boolean", [], [], Nothing),
 
-    ("PrintStream", "println", [TypeName "String"], TypeName "void", [static], [], Nothing)
+basicMtypes = -- TODO: extension  
+  (\x -> concat 
+         [ [ (c, m, id, argtys, retty, attrs, args, maybestmt) 
+           | ((c, m, argtys, retty, attrs, args, maybestmt),id) 
+             <- zip mtypesPerClass [1..] ] 
+         | mtypesPerClass <- x ] )
+  [ 
+    [
+      ("Set", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+      ("Set", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+      ("Set", "iterator", [], TypeName "Iterator", [], [], Nothing)
+    ],
+    
+    [
+      ("HashSet", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+      ("HashSet", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+      ("HashSet", "iterator", [], TypeName "Iterator", [], [], Nothing)
+    ],
+    
+    [
+      ("Iterator", "hasNext", [], TypeName "boolean", [], [], Nothing),
+      ("Iterator", "next", [], TypeName "Object", [], [], Nothing),
+      ("Iterator", "remove", [], TypeName "void", [], [], Nothing)
+    ],
+    
+    [
+      ("StringBuilder", "StringBuilder", [], TypeName "StringBuilder", [], [], Nothing),
+      ("StringBuilder", "append", [TypeName "String"], TypeName "StringBuilder", [], [], Nothing),
+      ("StringBuilder", "append", [TypeName "char"], TypeName "StringBuilder", [], [], Nothing),
+      ("StringBuilder", "setLength", [TypeName "int"], TypeName "void", [], [], Nothing),
+      ("StringBuilder", "toString", [], TypeName "String", [], [], Nothing)
+    ],
+    
+    [
+      ("String", "equals", [TypeName "String"], TypeName "boolean", [], [], Nothing)
+    ],
+
+    [
+      ("PrintStream", "println", [TypeName "String"], TypeName "void", [static], [], Nothing)
+    ]
   ]

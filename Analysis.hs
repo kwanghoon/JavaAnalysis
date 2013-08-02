@@ -26,10 +26,7 @@ mkTypedInfo info =
       is   = getInheritance info
       fs   = getFields info
       mtys = getMtype info
-      
-      typedmtys = [ (c, m, i, tys, ty, attrs, args, maybestmt) 
-                  | ((c,m, tys, ty, attrs, args, maybestmt), i) <- zip mtys [1..] ]
-  in  (ucs, is, fs, typedmtys)
+  in  (ucs, is, fs, mtys)
 
 --
 analysis :: Program -> TypedInfo -> WriterT Constraints IO ()
