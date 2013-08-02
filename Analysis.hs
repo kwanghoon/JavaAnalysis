@@ -13,7 +13,7 @@ doAnalysis :: Program -> Info -> IO ()
 doAnalysis program info = do
   typedInfo <- initAnalysis program info
   (_, constraints) <- runWriterT (analysis program typedInfo)
-  putStrLn ""
+  putStrLn $ show $ constraints
 
 --
 initAnalysis :: Program -> Info -> IO TypedInfo
@@ -35,6 +35,7 @@ mkTypedInfo info =
 analysis :: Program -> TypedInfo -> WriterT Constraints IO ()
 analysis program info = do
   tell [([1,2,3,4,5],6)]
+  tell [([1,2],7)]
   liftIO . putStrLn $ "print something..."
   
 aClass :: TypedInfo -> WriterT Constraints IO ()  

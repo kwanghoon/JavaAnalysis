@@ -68,6 +68,11 @@ tc_visitor = map ("./sample/visitorpattern/" ++)
               "visitor/VisitorAdapter.java"
             ]
              
+tc_tosem0 = map ("./sample/tosem/" ++)             
+           [
+             "Pointsto.java"
+           ]
+
 tc_tosem1 = map ("./sample/tosem/" ++)             
            [
              "Container.java"

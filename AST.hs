@@ -81,6 +81,10 @@ toStmt (stmt:stmts) = Seq stmt (toStmt stmts)
 tabstop n = combine $ take n $ repeat ((++) "   ")
 combine = foldr (.) id
 conc ss = combine (map (++) ss)
+
+cond [] s = id
+cond _  s = (++) s
+
 comma = intersperse "," 
 argsdecl cxs = concat $ comma [ conc [show c, " ", x] "" | (c,x) <- cxs ]
 --seqEs p es = combine [ showsPrec p e . conc [delimeter e] | e <- es ]
@@ -172,6 +176,7 @@ instance Show Stmt where
 instance Show MemberDecl where
   showsPrec p (MethodDecl attrs c m params s) = 
     tabstop p . conc (comma attrs) .
+    cond attrs " " .
     conc [show c, " ", m, "(", argsdecl params, ")", " ", "{", "\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
