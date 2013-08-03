@@ -110,6 +110,11 @@ list xs f = f xs
 
 comment s = conc ["//", " ", s]
 
+varNum    s = "v" ++ show s
+methodNum s = "m" ++ show s
+
+
+
 -- delimeter (Ite _ _ _) = ""
 -- delimeter (LocalVarDecl _ _ _) = ""
 -- delimeter _ = ";\n"
@@ -142,31 +147,36 @@ instance Show Expr where
   showsPrec p (ConstChar s) = conc ["\'", s, "\'"]
   showsPrec p (Prim "==" [x,y]) = conc [show x, "==", show y]
   showsPrec p (Prim "!=" [x,y]) = tabstop p . conc [show x, "!=", show y]
-  showsPrec p (Prim "primAddButton" [x]) = tabstop p . conc ["primAddButton", "(", show x, ")"]
-  showsPrec p (Prim "primStartActivity" [x]) = tabstop p . conc ["primStartActivity", "(", show x, ")"]
+  showsPrec p (Prim "primAddButton" [x]) = 
+    tabstop p . conc ["primAddButton", "(", show x, ")"]
+  showsPrec p (Prim "primStartActivity" [x]) = 
+    tabstop p . conc ["primStartActivity", "(", show x, ")"]
   showsPrec p (Prim "[]" [x,y]) = tabstop p . conc [show x, "[", show y, "]"]
   showsPrec p (Prim "[]=" [x,y]) = tabstop p . conc [show x, "=", show y]
-  showsPrec p (Prim "super" [x]) = tabstop p . conc ["super", "(", show x, ")"]
+  showsPrec p (Prim "super" [x]) = 
+    tabstop p . conc ["super", "(", show x, ")"]
   showsPrec p (Prim "<" [x,y]) = tabstop p . conc [show x, "<", show y]
   showsPrec p (Prim "++" [x,y]) = tabstop p . conc [show x, "++"]
   showsPrec p (Prim "--" [x,y]) = tabstop p . conc [show x, "--"]
   
 instance Show Stmt where  
   showsPrec p (Expr e) = tabstop p . conc [ show e, ";", "\n"]
-  showsPrec p (Ite e s1 NoStmt) = tabstop p . conc ["if", " ", "(", show e, ")", "\n"] 
-                               . showsPrec (p+1) s1
-                               . tabstop p . conc ["\n"]
-  showsPrec p (Ite e s1 s2) = tabstop p . conc ["if", " ", "(", show e, ")", "\n"] 
-                               . showsPrec (p+1) s1
-                               . tabstop p . conc ["\n"]
-                               . tabstop p . conc ["else", "\n"]
-                               . showsPrec (p+1) s2
-                               . tabstop p . conc ["\n"]
+  showsPrec p (Ite e s1 NoStmt) = 
+    tabstop p . conc ["if", " ", "(", show e, ")", "\n"] 
+    . showsPrec (p+1) s1
+    . tabstop p . conc ["\n"]
+  showsPrec p (Ite e s1 s2) = 
+    tabstop p . conc ["if", " ", "(", show e, ")", "\n"] 
+    . showsPrec (p+1) s1
+    . tabstop p . conc ["\n"]
+    . tabstop p . conc ["else", "\n"]
+    . showsPrec (p+1) s2
+    . tabstop p . conc ["\n"]
   showsPrec p (LocalVarDecl c x n maybee) = 
     tabstop p . conc [show c, " ", x] . 
     opt maybee (\e -> conc ["=", show e]) .
     conc [ ";", " "] . 
-    comment (show n) .
+    comment (varNum n) .
     conc ["\n"]
   showsPrec p (Return maybee) = 
     tabstop p . conc [ "return "] .
@@ -182,7 +192,7 @@ instance Show Stmt where
     tabstop p . conc [ "for", "(" ] .
     opt maybetyn (\(ty,_) -> conc [show ty, " "]) .
     conc [  x, "=", show e1, ";", " ", show e2, ";", " ", show e3, ")", " "] . 
-    opt maybetyn (\(_,n) -> comment (show n)) .
+    opt maybetyn (\(_,n) -> comment (varNum n)) .
     conc ["\n"] .
     showsPrec (p+1) s .
     tabstop p . conc [ "\n" ]
@@ -197,15 +207,17 @@ instance Show MemberDecl where
     tabstop p . conc (comma attrs) .
     cond attrs " " .
     conc [show c, " ", m, "(", argsdecl params, ")", " ", "{", " "] .  
-    comment (show id) . conc [" "] .
-    conc [show $ map getIdOfVar $ params] .
+    comment (methodNum id) . conc [" "] .
+    conc ["(", 
+          concat $ intersperse "," $ map (varNum . getIdOfVar) params, ")"] .
     conc ["\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
   showsPrec p (ConstrDecl k id params s) = 
     tabstop p . conc [k, "(", argsdecl params, ")", " ", "{", " "] .
-    comment (show id) . conc [" "] .
-    conc [show $ map getIdOfVar $ params] .
+    comment (methodNum id) . conc [" "] .
+    conc ["(", 
+          concat $ intersperse "," $ map (varNum . getIdOfVar) params, ")"] .
     conc ["\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
@@ -217,8 +229,9 @@ instance Show MemberDecl where
   showsPrec p (AbstractMethodDecl c m id params) = 
     tabstop p . 
     conc [show c, " ", m, "(", argsdecl params, ")", " ", ";", " "] . 
-    comment (show id) . conc [" "] .
-    conc [show $ map getIdOfVar $ params] .
+    comment (methodNum id) . conc [" "] .
+    conc ["(", 
+          concat $ intersperse "," $ map (varNum . getIdOfVar) params, ")"] .
     conc ["\n"]
     
 instance Show Class where
