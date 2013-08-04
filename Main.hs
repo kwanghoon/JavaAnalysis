@@ -18,6 +18,7 @@ run args =
      putStrLn $ prprog $ cs
      info <- typecheck cs
      doAnalysis cs info
+     return ()
           
 parse arg =           
   do s <- readFile arg

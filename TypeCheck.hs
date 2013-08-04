@@ -7,6 +7,10 @@ import Data.List
 import Data.Either
 
 --
+type TypingEnv = [(Name, TypeName)]
+type TypingCtx = (ClassName, Maybe ClassName, [ClassName], Maybe MethodName)
+
+--
 typecheck program = 
   do let info = initTypeCheck program
      maybetc <- tcProgram info program
@@ -234,7 +238,7 @@ tcClass info (Interface n is mdecls) =
   do rs <- mapM (tcMdecl info (n, Nothing, is)) mdecls -- TODO: all abstract?
      return $ anyJust $ rs
 
-tcMdecl :: Info -> (Name, Maybe Name, [Name]) -> MemberDecl -> IO (Maybe String)
+tcMdecl :: Info -> ClassInfo -> MemberDecl -> IO (Maybe String)
 tcMdecl info (c,p,is) (AbstractMethodDecl retty m _ targs) =
   do return $ Nothing
                        
@@ -245,7 +249,7 @@ tcMdecl info (c,p,is) (MethodDecl attrs retty m _ targs stmt) =
      let env1 = fromLeft either1
      if isRight either1
      then return $ Just $ "tcMdecl: exps " ++ fromRight either1
-     else if isJust (lookupEnv env1 "return") == False && 
+     else if isJust (lookupEnv (snd env1) "return") == False && 
              eqType retty (TypeName "void") == False &&
              c /= m   -- TODO: This is not enough!
           then return $ Just $ "tcMdecl: missing return in the method " ++ 
@@ -259,7 +263,7 @@ tcMdecl info (c,p,is) (FieldDecl attrs t v maybei) =
   if isNothing maybei
   then return $ Nothing
   else do let exp = fromJust maybei
-          let env = ((c, p, is, Nothing), [])
+          let env = []
           eithert <- tcExp info env exp
           let ty = fromLeft eithert
           if isRight eithert
@@ -272,7 +276,7 @@ tcMdecl info (c,p,is) (FieldDecl attrs t v maybei) =
                           
                           
 --
-tcExps :: Info -> (TypingCtx, TypingEnv) -> [Expr] -> IO (Either TypeName String)
+tcExps :: Info -> TypingEnv -> [Expr] -> IO (Either TypeName String)
 tcExps info env [] = return (Left (TypeName "void"))
 tcExps info env [exp] = tcExp info env exp
 tcExps info env (exp:exps) = 
@@ -282,7 +286,7 @@ tcExps info env (exp:exps) =
      else tcExps info env exps
 
 --     
-lookupEnv (ctx,tyenv) x =
+lookupEnv tyenv x =
   case [ t | (y,t) <- tyenv, x == y ] of
     []    -> Nothing
     (t:_) -> Just t
@@ -407,7 +411,7 @@ isSuperCall (Expr (Prim "super" es)) = True
 isSuperCall _                        = False
 
 --
-tcExp :: Info -> (TypingCtx, TypingEnv) -> Expr -> IO (Either TypeName String)
+tcExp :: Info -> TypingEnv -> Expr -> IO (Either TypeName String)
 tcExp info env (Var x) =
   do let maybet = lookupEnv env x
      if isNothing maybet
@@ -592,7 +596,7 @@ tcBeginStmt info env retty stmt =
              else tcStmt info env1 retty (head therest)
 
 tcSuperCall info env (Expr (Prim "super" es)) =
-  do eithertys <- mapM (tcExp info env) es
+  do eithertys <- mapM (tcExp info (snd env)) es
      let (argtys2,rs) = partitionEithers $ eithertys
      let p          = getParentClass env
      let maybektype = lookupKtype info (TypeName p) argtys2
@@ -607,23 +611,25 @@ tcSuperCall info env (Expr (Prim "super" es)) =
 tcSuperCall info env stmt =
   return $ Right $ "tcSuperCall: unexpected statement: " ++ show stmt
 
+tcStmt :: Info -> (TypingCtx, TypingEnv) -> TypeName -> Stmt 
+          -> IO (Either (TypingCtx, TypingEnv) String)
 tcStmt info env retty (Expr e) =
-  do eithert <- tcExp info env e
+  do eithert <- tcExp info (snd env) e
      let err = fromRight eithert
      if isRight eithert 
      then return $ Right $ err
      else return $ Left  $ env
     
 tcStmt info env retty (Ite cond s1 s2) =
-  do eithercondt <- tcExp info env cond
+  do eithercondt <- tcExp info (snd env) cond
      either1     <- tcStmt info env retty s1
      either2     <- tcStmt info env retty s2
      let condt = fromLeft  eithercondt
      let err   = fromRight eithercondt
      let env1  = fromLeft either1
      let env2  = fromLeft either2
-     let env'  = if isJust (lookupEnv env1 "return") && 
-                    isJust (lookupEnv env2 "return")
+     let env'  = if isJust (lookupEnv (snd env1) "return") && 
+                    isJust (lookupEnv (snd env2) "return")
                  then update env "return" retty
                  else env
          
@@ -643,7 +649,7 @@ tcStmt info env retty (LocalVarDecl tn x id maybee) =
      let env' = update env x tn 
      if isNothing maybee 
      then return $ Left $ env'
-     else do eithert <- tcExp info env e
+     else do eithert <- tcExp info (snd env) e
              let t = fromLeft eithert
              if isRight eithert 
              then return $ Right $ fromRight eithert 
@@ -659,7 +665,7 @@ tcStmt info env retty (Return Nothing) =
      else return $ Left $ env1
      
 tcStmt info env retty (Return (Just e)) = 
-  do eithert <- tcExp info env e
+  do eithert <- tcExp info (snd env) e
      let err  = fromRight eithert
      let t    = fromLeft eithert
      let env1 = update env "return" t
@@ -675,7 +681,7 @@ tcStmt info env retty (Seq s1 s2) =
      let env1 = fromLeft either1
      if isRight either1
      then return $ either1
-     else if isJust (lookupEnv env1 "return") 
+     else if isJust (lookupEnv (snd env1) "return") 
           then return $ Right $ "tcStmt: dead code after " ++ show s1
           else tcStmt info env1 retty s2
 
@@ -684,9 +690,9 @@ tcStmt info env retty (NoStmt) = return $ Left $ env
 tcStmt info env retty (For maybetyn x init cond upd s) =
   do let (ty,n) = fromJust maybetyn
      let env' = if isJust maybetyn then update env x ty else env
-     eitherinit <- tcExp info env' (Assign (Var x) init)
-     eitherbool <- tcExp info env' cond
-     eitherupd  <- tcExp info env' upd
+     eitherinit <- tcExp info (snd env') (Assign (Var x) init)
+     eitherbool <- tcExp info (snd env') cond
+     eitherupd  <- tcExp info (snd env') upd
      eitherfor  <- tcStmt info env' retty s
      if isRight eitherinit
         then return $ Right $ fromRight eitherinit ++ " in " ++ show (Assign (Var x) init)
@@ -701,7 +707,7 @@ tcStmt info env retty (For maybetyn x init cond upd s) =
                                         else return $ Left $ env -- Restore the environment
 
 tcStmt info env retty (While e s) = 
-  do eitherty <- tcExp info env e
+  do eitherty <- tcExp info (snd env) e
      let ty = fromLeft eitherty
      eitherenv <- tcStmt info env retty s
      if isRight eitherty
@@ -713,7 +719,7 @@ tcStmt info env retty (While e s) =
 tcStmt info env retty (Block s) = 
   do eitherenv <- tcStmt info env retty s
      let env' = 
-           if isJust (lookupEnv (fromLeft eitherenv) "return")
+           if isJust (lookupEnv (snd (fromLeft eitherenv)) "return")
            then update env "return" retty
            else env
      if isRight eitherenv 

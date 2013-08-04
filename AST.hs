@@ -5,7 +5,7 @@ import Data.List
 --
 type UniqueId     = Integer
 type ObjAllocSite = UniqueId
-type Ctx          = [ObjAllocSite]
+type Context      = [ObjAllocSite]
 data Set          = Set [UniqueId]
 
 --
@@ -21,15 +21,13 @@ type Fields      = [(ClassName, [(TypeName, FieldName, [Attrib])])]
 type Mtypes      = [(ClassName, MethodName, UniqueId, [TypeName], TypeName, [Attrib], [VarName], Maybe Stmt)]
 type Vtypes      = [(ClassName, MethodName, UniqueId, TypeName, [Attrib], VarName)]
 
-type Info = (UserClasses, Inheritance, Fields, Mtypes)
+type Info      = (UserClasses, Inheritance, Fields, Mtypes)
+type ClassInfo = (ClassName, Maybe ClassName, [ClassName]) -- itself, parent, interfaces
 
 getUserClasses (userClasses, inheritance, fields, mtype) = userClasses 
 getInheritance (userClasses, inheritance, fields, mtype) = inheritance
 getFields      (userClasses, inheritance, fields, mtype) = fields
 getMtype       (userClasses, inheritance, fields, mtype) = mtype
-
-type TypingEnv = [(Name, TypeName)]
-type TypingCtx = (ClassName, Maybe ClassName, [ClassName], Maybe MethodName)
 
 --
 type Name     = String
