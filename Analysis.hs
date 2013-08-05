@@ -10,8 +10,21 @@ import Control.Monad.State
 -- Constraints
 type Constraints = [Constraint]
 data Constraint  = 
-    C1 Set UniqueId        -- { r1, ... , rn } \subseteq Xi
-  | C2 UniqueId UniqueId   -- Xj \subseteq Xi
+    -- { r1, ... , rn } \subseteq Xi
+    C1 Set UniqueId        
+    
+    -- Xj \subseteq Xi
+  | C2 UniqueId UniqueId   
+    
+    -- C_field C X f D Z = C{X}.f <: D{Z}
+  | C_field ClassName UniqueId FieldName ClassName UniqueId
+    
+    -- C_fieldassign D Z C X f = D{Z} <: C{X}.f
+  | C_fieldassign ClassName UniqueId FieldName ClassName UniqueId
+
+    -- C_invoke C X m [S1,...,Sn] eff T = C{X}.m <: (S1,...,Sn) --eff--> T 
+  | C_invoke ClassName UniqueId MethodName UniqueId [AnnoType] Effect AnnoType
+
 
 -- Types annotated with a set of contexts
 data AnnoType = 
@@ -225,6 +238,8 @@ lookupEnv tyenv x =  -- TODO: Excerpted from TypeCheck.hs
   case [ t | (y,t) <- tyenv, x == y ] of
     []    -> Nothing
     (t:_) -> Just t
+    
+-- lookupFields info c f =     
 
 --
     
@@ -294,17 +309,24 @@ mkActionStmt (Seq stmt1 stmt2) = do
       let effect3 = unionEffect effect1 effect2
       return (typingenv2, effect3)
     
+--
 mkActionExpr :: Expr -> IO ActionExpr
-mkActionExpr (Var x) = do
-  return $ mkactionvar x
+mkActionExpr (Var x) = return $ actionvar x
+mkActionExpr (Field e f) = return $ actionfield e f
 
-mkactionvar x typingenv info context = do
-  let maybet = lookupEnv typingenv x
-  if isNothing maybet
-    then do actionexpr <- liftIO $ mkActionExpr (Field (Var "this") x) -- mkactionfield (Var "this") x
-            actionexpr typingenv info context
-    else return $ (fromJust maybet, noEffect)
+
+actionvar :: VarName -> ActionExpr
+actionvar x typingenv info context = do
+  let maybeaty = lookupEnv typingenv x
+  if isNothing maybeaty
+    then actionfield (Var "this") x typingenv info context
+    else return $ (fromJust maybeaty, noEffect)
          
--- mkactionfield exp f typingenv info context = do
+actionfield :: Expr -> FieldName -> ActionExpr
+actionfield exp f typingenv info context = do
+  actionexp  <- liftIO $ mkActionExpr exp           -- TODO: start here!!!
+  (aty, eff) <- actionexp typingenv info context
+  return (AnnoType "" 0, eff)
+  
   
             
