@@ -1,11 +1,9 @@
 module Analysis where
 
 import AST
--- import TypedAST
 import Library
 import Data.Maybe
 import Control.Monad.Trans (liftIO)
---import Control.Monad.Writer (WriterT, tell, runWriterT)
 import Control.Monad.State 
 
 -- Constraints
@@ -43,7 +41,8 @@ isWorklistEmpty _  = False
 nextFromWorklist l = (head l, tail l)
 
 
-type AnalysisState = (WorkList, Constraints, TypingTable) -- Can be extended if necessary
+type AnalysisState = -- Can be extended if necessary
+  (WorkList, Constraints, TypingTable, UniqueId)
 
 -- 
 type ActionMethod = 
@@ -72,7 +71,23 @@ lookupActionTable alist x =  -- TODO: Excerpted from TypeCheck.hs
   case [ t | (y,t) <- alist, x == y ] of
     []    -> Nothing
     (t:_) -> Just t
+    
+lookupFieldTyping :: TypingTable -> ClassName -> Context -> FieldName -> [AnnoType]
+lookupFieldTyping typingtable c ctx f =
+  [ atyi | F ci ctxi fi atyi <- typingtable, c==ci && ctx==ctxi && f==fi ]
 
+lookupMethodTyping :: TypingTable -> ClassName -> Context -> MethodName -> UniqueId 
+                      -> [([AnnoType], AnnoType)]
+lookupMethodTyping typingtable c ctx m id =
+  [ (atysi, atyi) 
+  | M ci ctxi mi idi atysi atyi <- typingtable, c==ci && ctx==ctxi && m==mi && idi==id ]
+
+lookupVarTyping :: TypingTable -> ClassName -> Context -> MethodName -> UniqueId -> VarName 
+                   -> UniqueId -> [AnnoType]
+lookupVarTyping typingtable c ctx m id v vid = 
+  [ atyi | V ci ctxi mi idi vi vidi atyi <- typingtable, 
+    c==ci && ctx==ctxi && m==mi && idi==id && vi==v && vidi==vid ]
+  
 --
 doAnalysis :: Program -> Info -> IO ()
 doAnalysis program info = return ()
@@ -81,10 +96,11 @@ doAnalysis' program info = do
   let worklist    = [] :: WorkList
   let typingtable = [] :: TypingTable
   let constraints = [] :: Constraints
-  let state       = (worklist, constraints, typingtable)
+  let uniqueid    = 1  :: UniqueId    
+  let state       = (worklist, constraints, typingtable, uniqueid)
   actionlookuptable <- mkActionProgram program
   (_, state1) <- runStateT (doWork info actionlookuptable) state
-  let (worklist1, constraints1, typingtable1) = state1
+  let (worklist1, constraints1, typingtable1, uniqueid1) = state1
   (_, constraints2) <- runStateT doSolve constraints1
   putStrLn "doAnalysis..."
 
@@ -94,13 +110,11 @@ doSolve = liftIO $ putStrLn "dosolve..."
 --
 doWork :: Info -> ActionLookupTable -> StateT AnalysisState IO ()
 doWork info actionlookuptable = do
-  -- Repeate the following execution
+  -- Repeate the following execution until the worklist is empty
   --  1. Get a piece of work from worklist
   --  2. Get an action for the work from actionlookuptable
-  --  3. Do the action and obtain a list of typing table and a set of constraints
-  --  4. Update the memorized typing table with the list
-  --  5. Also, update the worklist if there is any new typing table entry
-  --  6. Add the set of constraints to the accumulated one
+  --  3. Execute the action to update the typing table and constraints and
+  --  4. to also update the worklist if there is any new typing table entry
   
   worklist <- getWorklist 
   if isWorklistEmpty worklist == False
@@ -117,15 +131,81 @@ doWork' info actionlookuptable (c,ctx,m,id) = do
     else do action info ctx
             doWork info actionlookuptable
             
+--
+getNewid :: StateT AnalysisState IO UniqueId
+getNewid = do
+  (worklist,constraints,typingtable,uniqueid) <- get
+  put (worklist,constraints,typingtable,uniqueid+1)
+  return uniqueid
+  
+getNewids :: [a] -> StateT AnalysisState IO [UniqueId]
+getNewids ls = mapM f ls
+  where
+    f _ = getNewid
+
 getWorklist :: StateT AnalysisState IO WorkList
 getWorklist = do
-  (worklist,_,_) <- get
+  (worklist,_,_,_) <- get
   return worklist
   
 putWorklist :: WorkList -> StateT AnalysisState IO ()
 putWorklist worklist = do
-  (_,constraints,typingtable) <- get
-  put (worklist,constraints,typingtable)
+  (_,constraints,typingtable,uniqueid) <- get
+  put (worklist,constraints,typingtable,uniqueid)
+  
+  
+getFieldtyping :: ClassName -> Context -> FieldName -> StateT AnalysisState IO (Maybe AnnoType)
+getFieldtyping c ctx f = do
+  (worklist,constraints,typingtable,uniqueid) <- get
+  retMaybeAnnotype $ lookupFieldTyping typingtable c ctx f
+  
+  where
+    retMaybeAnnotype []  = return Nothing
+    retMaybeAnnotype [h] = return $ Just h
+    retMaybeAnnotype _   = do liftIO $ putStrLn $ "getFieldtyping: duplicate field typings for " 
+                                ++ show (c,ctx,f)
+                              return Nothing
+                              
+putTyping :: TableEntry -> StateT AnalysisState IO ()
+putTyping typing = do
+  (worklist,constraints,typingtable,uniqueid) <- get
+  put (worklist,constraints,typing:typingtable,uniqueid)
+                              
+getMethodtyping :: ClassName -> Context -> MethodName -> UniqueId 
+                   -> StateT AnalysisState IO (Maybe ([AnnoType], AnnoType))
+getMethodtyping c ctx m id = do
+  (worklist,constraints,typingtable,uniqueid) <- get
+  retMaybeAnnomtype $ lookupMethodTyping typingtable c ctx m id
+  
+  where
+    retMaybeAnnomtype []  = return Nothing
+    retMaybeAnnomtype [h] = return $ Just h
+    retMaybeAnnomtype _   = do liftIO $ putStrLn $ "getMethodtyping: duplicate method typings for "
+                                ++ show (c,ctx,m,id)
+                               return Nothing
+
+getVartyping :: ClassName -> Context -> MethodName -> UniqueId -> VarName -> UniqueId 
+                   -> StateT AnalysisState IO (Maybe AnnoType)
+getVartyping c ctx m id v vid = do
+  (worklist,constraints,typingtable,uniqueid) <- get
+  retMaybeAnnovtype $ lookupVarTyping typingtable c ctx m id v vid
+  
+  where
+    retMaybeAnnovtype []  = return Nothing
+    retMaybeAnnovtype [h] = return $ Just h
+    retMaybeAnnovtype _   = do liftIO $ putStrLn $ "getVartyping: duplicate variable typings for "
+                                ++ show (c,ctx,m,id,v,vid)
+                               return Nothing
+                               
+mkAnnoType :: TypeName -> StateT AnalysisState IO AnnoType
+mkAnnoType (TypeName n) = do
+  id <- getNewid
+  return (AnnoType n id)
+mkAnnoType (ArrayTypeName ty) = do  
+  id <- getNewid
+  aty <- mkAnnoType ty
+  return (AnnoArrayType aty id)
+
 
 --  
 type TypingEnv = [(Name, AnnoType)] -- cf. [(Name, TypeName)] in TypeCheck.hs
