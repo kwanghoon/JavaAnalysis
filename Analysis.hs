@@ -3,6 +3,7 @@ module Analysis where
 import AST
 import Library
 import Data.Maybe
+import Data.List
 import Control.Monad.Trans (liftIO)
 import Control.Monad.State 
 
@@ -17,6 +18,8 @@ data AnnoType =
     AnnoType Name UniqueId           -- C{Xi}
   | AnnoArrayType AnnoType UniqueId  -- C[]{Xi}[]{Xj}
 
+type AnnoMethodType = ([AnnoType], AnnoType, Effect)
+  
 --
 type TypingTable = [TableEntry]
 data TableEntry = 
@@ -24,13 +27,19 @@ data TableEntry =
     F ClassName Context FieldName AnnoType  
     
     -- M(C,ctx,m,k)= (Xi1, ... , Xin) ==> Xj
-  | M ClassName Context MethodName UniqueId [AnnoType] AnnoType 
+  | M ClassName Context MethodName UniqueId [AnnoType] AnnoType Effect
     
     -- V(C,ctx,m,k,x,j) = Xi
   | V ClassName Context MethodName UniqueId VarName UniqueId AnnoType
     
 emptyTypingTable = []    
 unionTypingTable t1 t2 = t1 ++ t2
+
+-- Effects
+data Effect = Effect [ClassName]
+
+noEffect = Effect []
+unionEffect (Effect eff1) (Effect eff2) = Effect $ nub $ eff1 ++ eff2
     
 -- WorkList
 type WorkList = [(ClassName,Context,MethodName,UniqueId)]
@@ -55,13 +64,13 @@ type ActionStmt =
   -> TypingCtx
   -> Info
   -> Context
-  -> StateT AnalysisState IO TypingEnv
+  -> StateT AnalysisState IO (TypingEnv, Effect)
   
 type ActionExpr =  
   TypingEnv
   -> Info
   -> Context
-  -> StateT AnalysisState IO AnnoType
+  -> StateT AnalysisState IO (AnnoType, Effect)
   
 type MethodIdentifier = (ClassName, MethodName, UniqueId)
   
@@ -77,10 +86,11 @@ lookupFieldTyping typingtable c ctx f =
   [ atyi | F ci ctxi fi atyi <- typingtable, c==ci && ctx==ctxi && f==fi ]
 
 lookupMethodTyping :: TypingTable -> ClassName -> Context -> MethodName -> UniqueId 
-                      -> [([AnnoType], AnnoType)]
+                      -> [AnnoMethodType]
 lookupMethodTyping typingtable c ctx m id =
-  [ (atysi, atyi) 
-  | M ci ctxi mi idi atysi atyi <- typingtable, c==ci && ctx==ctxi && m==mi && idi==id ]
+  [ (atysi, atyi, eff) 
+  | M ci ctxi mi idi atysi atyi eff <- typingtable
+  , c==ci && ctx==ctxi && m==mi && idi==id ]
 
 lookupVarTyping :: TypingTable -> ClassName -> Context -> MethodName -> UniqueId -> VarName 
                    -> UniqueId -> [AnnoType]
@@ -172,7 +182,7 @@ putTyping typing = do
   put (worklist,constraints,typing:typingtable,uniqueid)
                               
 getMethodtyping :: ClassName -> Context -> MethodName -> UniqueId 
-                   -> StateT AnalysisState IO (Maybe ([AnnoType], AnnoType))
+                   -> StateT AnalysisState IO (Maybe AnnoMethodType)
 getMethodtyping c ctx m id = do
   (worklist,constraints,typingtable,uniqueid) <- get
   retMaybeAnnomtype $ lookupMethodTyping typingtable c ctx m id
@@ -261,8 +271,8 @@ mkActionStmt (Expr expr) = do
   return $ mkaction actionexpr
   where
     mkaction actionexpr typingenv typingctx info context = do
-      _ <- actionexpr typingenv info context
-      return typingenv
+      (_, effect) <- actionexpr typingenv info context
+      return (typingenv, effect)
   
 mkActionStmt (NoStmt) = do
   -- Some constratins are generated.
@@ -271,7 +281,7 @@ mkActionStmt (NoStmt) = do
   where
     actionext typingenv typingctx info context = do
       -- put emptyTypingTable? No.
-      return typingenv
+      return (typingenv, noEffect)
       
 mkActionStmt (Seq stmt1 stmt2) = do
   actionstmt1 <- mkActionStmt stmt1
@@ -279,18 +289,22 @@ mkActionStmt (Seq stmt1 stmt2) = do
   return $ mkaction actionstmt1 actionstmt2
   where
     mkaction actionstmt1 actionstmt2 typingenv typingctx info context = do
-      typingenv1 <- actionstmt1 typingenv typingctx info context
-      typingenv2 <- actionstmt2 typingenv1 typingctx info context
-      return typingenv2
+      (typingenv1,effect1) <- actionstmt1 typingenv typingctx info context
+      (typingenv2,effect2) <- actionstmt2 typingenv1 typingctx info context
+      let effect3 = unionEffect effect1 effect2
+      return (typingenv2, effect3)
     
 mkActionExpr :: Expr -> IO ActionExpr
 mkActionExpr (Var x) = do
-  return mkactionexpr
-  where
-    mkactionexpr typingenv info context = do
-      let maybet = lookupEnv typingenv x
-      if isNothing maybet
-        then do actionexpr <- liftIO $ mkActionExpr (Field (Var "this") x)
-                actionexpr typingenv info context
-        else return $ fromJust maybet
+  return $ mkactionvar x
+
+mkactionvar x typingenv info context = do
+  let maybet = lookupEnv typingenv x
+  if isNothing maybet
+    then do actionexpr <- liftIO $ mkActionExpr (Field (Var "this") x) -- mkactionfield (Var "this") x
+            actionexpr typingenv info context
+    else return $ (fromJust maybet, noEffect)
+         
+-- mkactionfield exp f typingenv info context = do
+  
             
