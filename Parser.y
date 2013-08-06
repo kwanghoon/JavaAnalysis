@@ -160,11 +160,11 @@ primary : vars                         { $1 }
         | arg dec                      { Prim "--" [$1, $1] }
 
 vars    : var                          { Var $1 }
-        | vars '.' var                 { Field $1 $3 }
+        | vars '.' var                 { Field $1 $3 Nothing }
         | vars '[' expr ']'            { Prim "[]" [$1, $3] }
-        | vars '.' var '(' exprs ')'    { Invoke $1 $3 $5 }
-        | typename  '.' var            { StaticField (TypeName $1) $3 }
-        | typename '.' var '(' exprs ')'{ StaticInvoke (TypeName $1) $3 $5 }
+        | vars '.' var '(' exprs ')'    { Invoke $1 $3 $5 Nothing }
+        | typename  '.' var            { StaticField (TypeName $1) $3 Nothing }
+        | typename '.' var '(' exprs ')'{ StaticInvoke (TypeName $1) $3 $5 Nothing }
 
 stmts   :            { [] }
         | stmt stmts { $1 : $2 }

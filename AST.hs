@@ -59,31 +59,33 @@ data MemberDecl = MethodDecl [Attrib] TypeName Name UniqueId ArgDecls Stmt
 
 type Initializer = Expr
 
-data Expr = Var Name
-          | Field Expr Name
-          | StaticField TypeName Name
-          | New TypeName [Expr]
-          | Assign Expr Expr
-          | Cast TypeName Expr
-          | Invoke Expr Name [Expr]
-          | StaticInvoke TypeName Name [Expr]
-          | ConstTrue
-          | ConstFalse
-          | ConstNull
-          | ConstNum String
-          | ConstLit String
-          | ConstChar String
-          | Prim Name [Expr]
+data Expr = 
+    Var Name
+  | Field Expr Name (Maybe TypeName)           -- for field type
+  | StaticField TypeName Name (Maybe TypeName) -- for field type
+  | New TypeName [Expr]
+  | Assign Expr Expr
+  | Cast TypeName Expr
+  | Invoke Expr Name [Expr] (Maybe TypeName)           -- for return type
+  | StaticInvoke TypeName Name [Expr] (Maybe TypeName) -- for return type
+  | ConstTrue
+  | ConstFalse
+  | ConstNull
+  | ConstNum String
+  | ConstLit String
+  | ConstChar String
+  | Prim Name [Expr]
             
-data Stmt = Expr Expr
-          | Ite Expr Stmt Stmt
-          | LocalVarDecl TypeName Name UniqueId (Maybe Expr)
-          | Return (Maybe Expr)
-          | Seq Stmt Stmt
-          | NoStmt
-          | While Expr Stmt
-          | For (Maybe (TypeName, UniqueId)) Name Expr Expr Expr Stmt
-          | Block Stmt
+data Stmt = 
+    Expr Expr
+  | Ite Expr Stmt Stmt
+  | LocalVarDecl TypeName Name UniqueId (Maybe Expr)
+  | Return (Maybe Expr)
+  | Seq Stmt Stmt
+  | NoStmt
+  | While Expr Stmt
+  | For (Maybe (TypeName, UniqueId)) Name Expr Expr Expr Stmt
+  | Block Stmt
             
 toStmt []           = NoStmt
 toStmt [stmt]       = stmt
@@ -125,18 +127,19 @@ instance Show TypeName where
     
 instance Show Expr where            
   showsPrec p (Var n) = tabstop p . conc [n]
-  showsPrec p (Field e f) = tabstop p . conc [show e, ".", f]
-  showsPrec p (StaticField c f) = tabstop p . conc [show c, ".", f]
+  showsPrec p (Field e f _) = tabstop p . conc [show e, ".", f]
+  showsPrec p (StaticField c f _) = tabstop p . conc [show c, ".", f]
   showsPrec p (New (ArrayTypeName c) [e]) =
     tabstop p . conc (["new", " ",  show c, "[", show e, "]"])
   showsPrec p (New c es) = 
     tabstop p . conc (["new", " ",  show c, "("] ++ comma (map show es) ++ [")"])
   showsPrec p (Assign e y) = tabstop p . conc [show e, "=", show y]
   showsPrec p (Cast c e) = tabstop p . conc ["(", show c, ")", show e]
-  showsPrec p (Invoke e m ys) = tabstop p . conc ([show e, ".", m, "("] ++ 
+  showsPrec p (Invoke e m ys _) = tabstop p . conc ([show e, ".", m, "("] ++ 
                                                   comma (map show ys) ++ [")"])
-  showsPrec p (StaticInvoke c m ys) = tabstop p . conc ([show c, ".", m, "("] ++ 
-                                                  comma (map show ys) ++ [")"])
+  showsPrec p (StaticInvoke c m ys _) = 
+    tabstop p . conc ([show c, ".", m, "("] ++ 
+                      comma (map show ys) ++ [")"])
   showsPrec p (ConstTrue)  = conc ["true"]
   showsPrec p (ConstFalse) = conc ["false"]
   showsPrec p (ConstNull)  = conc ["null"]

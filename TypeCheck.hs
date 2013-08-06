@@ -5,24 +5,27 @@ import Library
 import Data.Maybe
 import Data.List
 import Data.Either
+import Control.Monad.Error
 
 --
 type TypingEnv = [(Name, TypeName)]
 type TypingCtx = (ClassName, Maybe ClassName, [ClassName], Maybe MethodName)
+type TCError = String
 
 --
+typecheck :: Program -> IO (Maybe (Info, Program))
 typecheck program = 
   do let info = initTypeCheck program
-     maybetc <- tcProgram info program
-     prTCResult info maybetc
-     return info
+     eitherprogram <- runErrorT (tcProgram info program)
+     returnResult info eitherprogram
 
-prTCResult info maybetc = do
-  let err = fromJust maybetc
-  if isJust maybetc 
-    then putStrLn err
-    else do prTyInfo info 
-            putStrLn "Successfully typechecked..."
+returnResult info (Left err) = do
+  putStrLn err
+  return Nothing
+returnResult info (Right program) = do  
+  prTyInfo info
+  putStrLn "Successfully typechecked..."
+  return $ Just (info, program)
 
 -- 0. Print type information
 prTyInfo (userClasses, inheritance, fields, mtypes) =
@@ -34,7 +37,6 @@ prTyInfo (userClasses, inheritance, fields, mtypes) =
      prFields basicFields
      prMtypes mtypes
      prMtypes basicMtypes
---     prMbody mbodies
 
 prUserClasses userClasses = 
   do putStrLn "Classes: "
@@ -212,79 +214,59 @@ subMtype info (targs1, tret1) (targs2, tret2) =
   all (True==) [subType info t1 t2 | (t1,t2) <- zip targs2 targs1] &&
   subType info tret1 tret2
   
---    
-isLeft (Left _)  = True
-isLeft (Right _) = False
-
-isRight (Right _) = True
-isRight (Left _)  = False
-
-fromLeft (Left l) = l
-fromLeft (Right r)  = error $ "fromLeft: Right" ++ show r
-
-fromRight (Right r) = r
-fromRight (Left l)  = error $ "fromLeft: Left" ++ show l
-
 --
+tcProgram :: Info -> Program -> ErrorT TCError IO Program
 tcProgram info program = 
-  do rs <- mapM (tcClass info) program
-     return $ anyJust $ rs
+  do program1 <- mapM (tcClass info) program
+     return $ program1
      
-tcClass :: Info -> Class -> IO (Maybe String)
+-- tcClass :: Info -> Class -> IO (Maybe String)
+tcClass :: Info -> Class -> ErrorT TCError IO Class
 tcClass info (Class attrs n p is mdecls) =
-  do rs <- mapM (tcMdecl info (n, p, is)) mdecls
-     return $ anyJust $ rs
+  do mdecls1 <- mapM (tcMdecl info (n, p, is)) mdecls
+     return $ (Class attrs n p is mdecls1)
 tcClass info (Interface n is mdecls) =
-  do rs <- mapM (tcMdecl info (n, Nothing, is)) mdecls -- TODO: all abstract?
-     return $ anyJust $ rs
+  -- TODO: all abstract?
+  do mdecls1 <- mapM (tcMdecl info (n, Nothing, is)) mdecls 
+     return $ (Interface n is mdecls1)
 
-tcMdecl :: Info -> ClassInfo -> MemberDecl -> IO (Maybe String)
-tcMdecl info (c,p,is) (AbstractMethodDecl retty m _ targs) =
-  do return $ Nothing
+-- tcMdecl :: Info -> ClassInfo -> MemberDecl -> IO (Maybe String)
+tcMdecl :: Info -> ClassInfo -> MemberDecl -> ErrorT TCError IO MemberDecl
+tcMdecl info (c,p,is) (AbstractMethodDecl retty m id targs) = do
+  return (AbstractMethodDecl retty m id targs)
                        
-tcMdecl info (c,p,is) (MethodDecl attrs retty m _ targs stmt) = 
-  do let env = ((c, p, is, Just m), 
-                ("this", TypeName c) : [(x,c) | (c, x, _) <- targs])
-     either1 <- tcBeginStmt info env retty stmt
-     let env1 = fromLeft either1
-     if isRight either1
-     then return $ Just $ "tcMdecl: exps " ++ fromRight either1
-     else if isJust (lookupEnv (snd env1) "return") == False && 
-             eqType retty (TypeName "void") == False &&
-             c /= m   -- TODO: This is not enough!
-          then return $ Just $ "tcMdecl: missing return in the method " ++ 
-                               m ++ " of class " ++ c
-          else return $ Nothing
+tcMdecl info (c,p,is) (MethodDecl attrs retty m id targs stmt) = do
+  let ctx = (c, p, is, Just m)
+  let env = ("this", TypeName c) : [(x,ty) | (ty, x, _) <- targs]
+  (env1, stmt1) <- tcBeginStmt info ctx env retty stmt
+  if isJust (lookupEnv env1 "return") == False &&
+     eqType retty (TypeName "void") == False &&
+     c /= m   -- TODO: This is not enough!
+    then throwError ("tcMdecl: missing return in the method " ++ 
+                     m ++ " of class " ++ c)
+    else return $ (MethodDecl attrs retty m id targs stmt1)
        
-tcMdecl info (c,p,is) (ConstrDecl rettyn id targs stmt) = -- TODO: it's own typing?
-  do tcMdecl info (c,p,is) (MethodDecl [] (TypeName rettyn) c id targs stmt)
+tcMdecl info (c,p,is) (ConstrDecl rettyn id targs stmt) = do 
+  let ctx = (c,p,is,Just c)
+  let env = ("this", TypeName c) : [(x,ty) | (ty, x, _) <- targs]
+  (env1, stmt1) <- tcBeginStmt info ctx env (TypeName rettyn) stmt
+  if (rettyn == c) == False
+     then throwError ("tcMdecl: a wrong constructor name " ++ rettyn ++ 
+                      " in " ++ c)
+     else return (ConstrDecl rettyn id targs stmt1)     
     
-tcMdecl info (c,p,is) (FieldDecl attrs t v maybei) = 
+tcMdecl info (c,p,is) (FieldDecl attrs t v maybei) =
   if isNothing maybei
-  then return $ Nothing
-  else do let exp = fromJust maybei
-          let env = []
-          eithert <- tcExp info env exp
-          let ty = fromLeft eithert
-          if isRight eithert
-             then return $ Just $ fromRight eithert
-             else if subType info ty t == False
-                     then return $ Just $ 
-                          "tcMdecl: type error in the initializer: " ++
-                          show (FieldDecl attrs t v maybei)
-                     else return $ Nothing
+  then do return $ (FieldDecl attrs t v maybei)
+  else do 
+    let initexp = fromJust maybei
+    let env = []
+    (ty, expr) <- tcExp info env initexp
+    if subType info ty t == False
+       then throwError ("tcMdecl: type error in the initializer: " ++
+                        show (FieldDecl attrs t v maybei))
+       else return $ (FieldDecl attrs t v (Just expr))
                           
-                          
---
-tcExps :: Info -> TypingEnv -> [Expr] -> IO (Either TypeName String)
-tcExps info env [] = return (Left (TypeName "void"))
-tcExps info env [exp] = tcExp info env exp
-tcExps info env (exp:exps) = 
-  do either <- tcExp info env exp
-     if isRight either 
-     then return either 
-     else tcExps info env exps
-
 --     
 lookupEnv tyenv x =
   case [ t | (y,t) <- tyenv, x == y ] of
@@ -391,12 +373,12 @@ lookupKtype'' info c m argtys mtypes inheritance =
     mts  -> chooseMostSpecificMtype info mts
            
 
-update (ctx,tyenv) x t = (ctx, (x,t) : [ (y,s) | (y,s) <- tyenv, x /= y ])
+update tyenv x t = (x,t) : [ (y,s) | (y,s) <- tyenv, x /= y ]
 
 getCurrentClass ((c,p,is,m),tyenv) = c
 
-getParentClass ((c,Just d,is,m),tyenv)  = d
-getParentClass ((c,Nothing,is,m),tyenv) = "Object"
+getParentClass (c,Just d,is,m)  = d
+getParentClass (c,Nothing,is,m) = "Object"
 
 firstStmt (Expr e)                    = Just (Expr e, [])
 firstStmt (Ite cond s1 s2)            = Just (Ite cond s1 s2, [])
@@ -411,147 +393,107 @@ isSuperCall (Expr (Prim "super" es)) = True
 isSuperCall _                        = False
 
 --
-tcExp :: Info -> TypingEnv -> Expr -> IO (Either TypeName String)
-tcExp info env (Var x) =
-  do let maybet = lookupEnv env x
-     if isNothing maybet
-       then do eithert <- tcExp info env (Field (Var "this") x) 
-               if isRight eithert 
-                 then return $ Right $ "tcExp: variable " ++ x ++ " not found"
-                 else return eithert
-       else return $ Left  $ fromJust maybet
+tcExp :: Info -> TypingEnv -> Expr -> ErrorT TCError IO (TypeName, Expr)
+tcExp info env (Var x) = do
+  let maybet = lookupEnv env x
+  if isJust maybet
+     then return $ (fromJust maybet, Var x) 
+     else do (ty,expr) <- tcExp info env (Field (Var "this") x Nothing) 
+                               `catchError` handler x
+             return (ty, expr)
+  where
+    handler x s = throwError $ "tcExp: variable " ++ x ++ " not found"
 
-tcExp info env (Field e f) = 
-  do eitherty <- tcExp info env e
-     let c = fromLeft eitherty
-     let maybed = lookupFields info c f
+tcExp info env (Field e f maybety) = 
+  do (ty,expr) <- tcExp info env e
+     let maybed = lookupFields info ty f
      let (d,attrs) = fromJust maybed
-     if isRight eitherty 
-       then return $ eitherty
-       else if isNothing maybed 
-            then return $ Right $ "tcExp: no such field found: " ++ 
-                 show (Field e f)
-            else return $ Left $ d
+     if isNothing maybed 
+        then throwError ("tcExp: no such field found: " ++ 
+                         show (Field e f maybety))
+        else return (d, Field expr f (Just d))
                  
-tcExp info env (StaticField c f) = 
+tcExp info env (StaticField c f maybety) = 
   do let maybed = lookupFields info c f
      let (d,attrs) = fromJust maybed
      if isNothing maybed
-        then return $ Right $ "tcExp: no such field found: " ++ 
-             show (StaticField c f)
+        then throwError ("tcExp: no such field found: " ++ 
+                         show (StaticField c f maybety))
         else if elem static attrs == False 
-             then return $ Right $ "tcExp: not static field: " ++
-                  show (StaticField c f)
-             else return $ Left $ d
+             then throwError ("tcExp: not static field: " ++ 
+                              show (StaticField c f maybety))
+             else return (d, StaticField c f (Just d))
                  
 tcExp info env (New t es) = 
-  do eitherts <- mapM (tcExp info env) es
-     let (ls,rs) = partitionEithers $ eitherts
-     let argts1 = ls
-     let maybektype = lookupKtype info t argts1
-     let argts2 = fromJust maybektype
-     if null rs == False 
-       then return $ Right $ head $ rs 
-       else if isNothing maybektype 
-               then return $ Right $ "tcExp: invalid type constructor: " ++
-                    show (New t es)
-               else return $ Left $ t
+  do tyexprs <- mapM (tcExp info env) es
+     let (tys,exprs) = unzip tyexprs
+     let maybektype = lookupKtype info t tys
+     if isNothing maybektype 
+        then throwError ("tcExp: invalid type constructor: " ++
+                         show (New t es))
+        else return $ (t, New t exprs)
             
-tcExp info env (Assign lhs e) =  -- Note the parser ensure that lhs is legal.
-  do eitherlhsty <- tcExp info env lhs
-     let lhsty = fromLeft eitherlhsty
-     eitherty <- tcExp info env e
-     let ty = fromLeft eitherty
-     if isRight eitherlhsty
-       then return $ eitherlhsty
-       else if isRight eitherty
-               then return eitherty 
-               else if subType info ty lhsty == False
-                       then return $ Right $ "tcExp: type mismatch in " ++ 
-                            show (Assign lhs e)   
-                       else return $ Left $ TypeName "void"
+tcExp info env (Assign lhs e) =  -- Note the parser ensures that lhs is legal.
+  do (lhsty,lhsexpr) <- tcExp info env lhs
+     (ty,   expr)    <- tcExp info env e
+     if subType info ty lhsty == False
+       then throwError ("tcExp: type mismatch in " ++ show (Assign lhs e))
+       else return $ (TypeName "void", Assign lhsexpr expr)
             
 tcExp info env (Cast tn e) =            
-  do eithert <- tcExp info env e
-     let t = fromLeft eithert
-     if isRight eithert 
-       then return eithert 
-       else if subType info tn t == False && subType info t tn == False 
-            then return $ Right $ 
-                 "tcExp: type cast error for " ++ show (Cast tn e)
-            else return $ Left $ tn
+  do (ty, expr) <- tcExp info env e
+     if subType info tn ty == False && subType info ty tn == False 
+       then throwError ("tcExp: type cast error for " ++ show (Cast tn e))
+       else return $ (tn, Cast tn expr)
                  
-tcExp info env (Invoke e m es) = 
-  do eithert  <- tcExp info env e
-     eitherts <- mapM (tcExp info env) es
-     let t = fromLeft eithert
-     let ts = map fromLeft eitherts
-     let maybemtype = lookupMtype info t m ts
-     let (argts, rett, attrs) = fromJust maybemtype
-         
-     if isRight eithert 
-       then return $ Right $ fromRight eithert ++ " in " ++ show (Invoke e m es)
-       else if (all (True==) $ map isLeft $ eitherts) == False
-               then return $ head $
-                    [eithert' | eithert' <- eitherts, isRight eithert']
-               else if isNothing maybemtype 
-                    then return $ Right $ "tcExp: method not found: " ++ m ++
-                         show ts ++ " in " ++ show t ++ 
-                         ": " ++ show (Invoke e m es)
-                    else return $ Left $ rett
-                           
-tcExp info env (StaticInvoke c m es) = 
-  do eitherts <- mapM (tcExp info env) es
-     let ts = map fromLeft eitherts
-     let maybemtype = lookupMtype info c m ts
-     let (argts, rett, attrs) = fromJust maybemtype
+tcExp info env (Invoke e m es tyann) = 
+  do (ty, expr) <- tcExp info env e
+     tyexprs    <- mapM (tcExp info env) es
+     let (tys, exprs) = unzip tyexprs
+     let maybemtype = lookupMtype info ty m tys
+     let (argts, retty, attrs) = fromJust maybemtype
          
      if isNothing maybemtype 
-       then return $ Right $ "tcExp: method not found: " ++ m 
-       else if (all (True==) $ map isLeft $ eitherts) == False
-               then return $ head $ 
-                    [eithert' | eithert' <- eitherts, isRight eithert']
-               else if elem static attrs == False
-                       then return $ Right $ "tcExp: not static method: " ++
-                            show (StaticInvoke c m es) 
-                       else return $ Left $ rett
+       then throwError ("tcExp: method not found: " ++ m ++
+                        show tys ++ " in " ++ show ty ++
+                        ": " ++ show (Invoke e m es tyann))
+       else return $ (retty, Invoke expr m exprs (Just retty))
                            
-tcExp info env (ConstTrue)  = return $ Left $ TypeName "boolean"
-tcExp info env (ConstFalse) = return $ Left $ TypeName "boolean"
-tcExp info env (ConstNull) = return $ Left $ TypeName "null" -- TODO: null type
-tcExp info env (ConstNum n) = return $ Left $ TypeName "int"
-tcExp info env (ConstLit s) = return $ Left $ TypeName "String"
-tcExp info env (ConstChar s) = return $ Left $ TypeName "char"
+tcExp info env (StaticInvoke c m es tyann) = 
+  do tyexprs <- mapM (tcExp info env) es
+     let (tys,exprs) = unzip tyexprs
+     let maybemtype = lookupMtype info c m tys
+     let (argts, retty, attrs) = fromJust maybemtype
+         
+     if elem static attrs == False
+       then throwError ("tcExp: not static method: " ++
+                        show (StaticInvoke c m es tyann))
+       else return $ (retty, StaticInvoke c m exprs (Just retty))
+                           
+tcExp info env (ConstTrue)  = return $ (TypeName "boolean", ConstTrue)
+tcExp info env (ConstFalse) = return $ (TypeName "boolean", ConstFalse)
+tcExp info env (ConstNull) = return $ (TypeName "null", ConstNull) -- TODO: null type
+tcExp info env (ConstNum n) = return $ (TypeName "int", ConstNum n)
+tcExp info env (ConstLit s) = return $ (TypeName "String", ConstLit s)
+tcExp info env (ConstChar s) = return $ (TypeName "char", ConstChar s)
 tcExp info env (Prim "[]" [e1,e2]) = 
-  do eithert1 <- tcExp info env e1
-     eithert2 <- tcExp info env e2
-     let t1 = fromLeft eithert1
-     let t2 = fromLeft eithert2
-     if isRight eithert1
-     then return eithert1
-     else if isRight eithert2
-          then return eithert2
-          else if isArray t1 == False || isInt t2 == False
-               then return $ Right $ "tcExp: type mismatch in array indexing: " 
-                           ++ show (Prim "[]" [e1,e2])
-               else return $ Left  $ elemType $ t1
+  do (ty1, expr1) <- tcExp info env e1
+     (ty2, expr2) <- tcExp info env e2
+     if isArray ty1 == False || isInt ty2 == False
+       then throwError ("tcExp: type mismatch in array indexing: " ++ 
+                        show (Prim "[]" [e1,e2]))
+       else return $ (elemType ty1, Prim "[]" [expr1,expr2])
 
 tcExp info env (Prim "[]=" [e1, e2]) = 
-  do eithert1 <- tcExp info env e1
-     eithert2 <- tcExp info env e2
-     let t1 = fromLeft eithert1
-     let t2 = fromLeft eithert2
-     if isRight eithert1
-        then return eithert1
-        else if isRight eithert2
-                then return eithert2 
-                else if subType info t2 t1 == False
-                        then return $ Right $ "tcExp: not assignable type: " ++ 
-                             show (Prim "[]=" [e1, e2]) 
-                        else return $ Left $ TypeName $ "void"
+  do (ty1, expr1) <- tcExp info env e1
+     (ty2, expr2) <- tcExp info env e2
+     if subType info ty2 ty1 == False
+       then throwError ("tcExp: not assignable type: " ++ 
+                        show (Prim "[]=" [e1, e2]))
+       else return $ (TypeName "void", Prim "[]=" [expr1,expr2])
         
 tcExp info env (Prim "super" es) = 
-  do return $ Right $ "tcExp: misplaced super call: " ++ show (Prim "super" es)
+  do throwError ("tcExp: misplaced super call: " ++ show (Prim "super" es))
 
 tcExp info env (Prim n es) = 
   if elem n ["==", "!="] == False
@@ -559,172 +501,133 @@ tcExp info env (Prim n es) =
      else tcExp'' info env (Prim n es)     
   
 tcExp' info env (Prim n es) =  
-  do eitherts <- mapM (tcExp info env) es
-     let (ls,rs) = partitionEithers $ eitherts
-     let mtypes = [(argts,rett) | (p, argts, rett) <- primTypeTable, p == n]
-     let retts  = [rett | (argts, rett) <- mtypes, length ls == length argts
-                        , all (True==) [eqType t1 t2 | (t1,t2) <- zip ls argts]]
-     if null rs == False
-     then return $ Right $ head $ rs
-     else if null retts
-          then return $ Right $ "tcExp: type mismatch in " ++ show (Prim n es)
-          else return $ Left  $ head $ retts
+  do tyexprs <- mapM (tcExp info env) es
+     let (tys,exprs) = unzip tyexprs
+     let mtypes = [(argtys,retty) | (p, argtys, retty) <- primTypeTable, p == n]
+     let rettys = [retty | (argtys, retty) <- mtypes
+                         , length tys == length argtys
+                         , all (True==) [eqType ty1 ty2 
+                                        | (ty1,ty2) <- zip tys argtys]]
+     case rettys of
+       []  -> throwError ("tcExp: type mismatch in " ++ show (Prim n es))
+       [h] -> return $ (h, Prim n exprs)
+       _   -> throwError ("tcExp: multiple type matches: " ++ show (Prim n es))
 
 tcExp'' info env (Prim n [e1,e2]) = -- ==, !=
-  do eitherts <- mapM (tcExp info env) [e1,e2]
-     let (ls,rs) = partitionEithers $ eitherts
-     let [ty1,ty2] = map fromLeft eitherts
-     if null rs == False
-     then return $ Right $ head $ rs
-     else if (subType info ty1 ty2 || subType info ty2 ty1) == False
-          then return $ Right $ "tcExp: type mismatch in " ++ 
-                                show (Prim n [e1,e2])
-          else return $ Left  $ TypeName "boolean"
+  do tyexprs <- mapM (tcExp info env) [e1,e2]
+     let (tys,exprs) = unzip tyexprs
+     let [ty1,ty2] = tys
+     if (subType info ty1 ty2 || subType info ty2 ty1) == False
+       then throwError ("tcExp: type mismatch in " ++ show (Prim n [e1,e2]))
+       else return $ (TypeName "boolean", Prim n exprs)
 
 
 -- tcExp info env es = error ("Missing: " ++ show es)
 
-tcBeginStmt info env retty stmt = 
+tcBeginStmt :: Info -> TypingCtx -> TypingEnv -> TypeName -> Stmt 
+          -> ErrorT TCError IO (TypingEnv, Stmt)
+tcBeginStmt info ctx env retty stmt = 
   do let maybe = firstStmt stmt
      let (stmt1, therest) = fromJust maybe
      if isJust maybe == False || isSuperCall stmt1 == False
-     then tcStmt info env retty stmt
-     else do either1 <- tcSuperCall info env stmt1
-             let env1 = fromLeft either1
-             if null therest || isRight either1
-             then return either1
-             else tcStmt info env1 retty (head therest)
+     then tcStmt info ctx env retty stmt
+     else do (env1,supercall1) <- tcSuperCall info ctx env stmt1
+             if null therest 
+             then return (env1, supercall1)
+             else tcStmt info ctx env1 retty (head therest)
 
-tcSuperCall info env (Expr (Prim "super" es)) =
-  do eithertys <- mapM (tcExp info (snd env)) es
-     let (argtys2,rs) = partitionEithers $ eithertys
-     let p          = getParentClass env
+tcSuperCall :: Info -> TypingCtx -> TypingEnv -> Stmt -> ErrorT TCError IO (TypingEnv, Stmt)
+tcSuperCall info ctx env (Expr (Prim "super" es)) =
+  do argtysexprs <- mapM (tcExp info env) es
+     let (argtys2,argexprs) = unzip argtysexprs
+     let p          = getParentClass ctx
      let maybektype = lookupKtype info (TypeName p) argtys2
      let argtys1    = fromJust maybektype
-     if null rs == False
-        then return $ Right $ head $ rs
-        else if isNothing maybektype
-                then return $ Right $ "tcExp: invalid super call: " ++ 
-                     show (Prim "super" es)
-                else return $ Left $ env
+     if isNothing maybektype
+       then throwError ("tcExp: invalid super call: " ++ show (Prim "super" es))
+       else return $ (env, (Expr (Prim "super" argexprs)))
         
-tcSuperCall info env stmt =
-  return $ Right $ "tcSuperCall: unexpected statement: " ++ show stmt
+tcSuperCall info ctx env stmt =
+  throwError ("tcSuperCall: unexpected statement: " ++ show stmt)
 
-tcStmt :: Info -> (TypingCtx, TypingEnv) -> TypeName -> Stmt 
-          -> IO (Either (TypingCtx, TypingEnv) String)
-tcStmt info env retty (Expr e) =
-  do eithert <- tcExp info (snd env) e
-     let err = fromRight eithert
-     if isRight eithert 
-     then return $ Right $ err
-     else return $ Left  $ env
+tcStmt :: Info -> TypingCtx -> TypingEnv -> TypeName -> Stmt 
+          -> ErrorT TCError IO (TypingEnv, Stmt)
+tcStmt info ctx env retty (Expr e) =
+  do (ty, expr) <- tcExp info env e
+     return $ (env, Expr expr)
     
-tcStmt info env retty (Ite cond s1 s2) =
-  do eithercondt <- tcExp info (snd env) cond
-     either1     <- tcStmt info env retty s1
-     either2     <- tcStmt info env retty s2
-     let condt = fromLeft  eithercondt
-     let err   = fromRight eithercondt
-     let env1  = fromLeft either1
-     let env2  = fromLeft either2
-     let env'  = if isJust (lookupEnv (snd env1) "return") && 
-                    isJust (lookupEnv (snd env2) "return")
+tcStmt info ctx env retty (Ite cond s1 s2) =
+  do (condty, condexpr) <- tcExp  info env cond
+     (env1,   stmt1)    <- tcStmt info ctx env retty s1
+     (env2,   stmt2)    <- tcStmt info ctx env retty s2
+     let env'  = if isJust (lookupEnv env1 "return") && 
+                    isJust (lookupEnv env2 "return")
                  then update env "return" retty
                  else env
          
-     if isRight eithercondt 
-     then return (Right err)
-     else if isRight either1
-          then return either1
-          else if isRight either2
-               then return either2 
-               else if isBoolean condt == False
-                    then return $ Right $ "tcExp: not boolean type for " ++
-                                show (Ite cond s1 s2)
-                    else return $ Left  $ env'
+     if isBoolean condty == False
+       then throwError ("tcExp: not boolean type for " ++ show (Ite cond s1 s2))
+       else return $ (env', Ite condexpr stmt1 stmt2)
 
-tcStmt info env retty (LocalVarDecl tn x id maybee) = 
+tcStmt info ctx env retty (LocalVarDecl tn x id maybee) = 
   do let e = fromJust maybee
      let env' = update env x tn 
      if isNothing maybee 
-     then return $ Left $ env'
-     else do eithert <- tcExp info (snd env) e
-             let t = fromLeft eithert
-             if isRight eithert 
-             then return $ Right $ fromRight eithert 
-             else if subType info t tn == False
-                   then return $ Right $ "tcExp: type mismatch for " ++ x ++
-                               " in " ++ show e
-                   else return $ Left  $ env'
+     then return $ (env', LocalVarDecl tn x id maybee)
+     else do (ty, expr) <- tcExp info env e
+             if subType info ty tn == False
+             then throwError 
+                    ("tcExp: type mismatch for " ++ x ++ " in " ++ show e)
+             else return $ (env', LocalVarDecl tn x id (Just expr))
 
-tcStmt info env retty (Return Nothing) = 
+tcStmt info ctx env retty (Return Nothing) = 
   do let env1 = update env "return" (TypeName "void")
      if eqType retty (TypeName "void") == False 
-     then return $ Right $ "tcStmt: return type is not void: " ++ show retty
-     else return $ Left $ env1
+     then throwError ("tcStmt: return type is not void: " ++ show retty)
+     else return $ (env1, Return Nothing)
      
-tcStmt info env retty (Return (Just e)) = 
-  do eithert <- tcExp info (snd env) e
-     let err  = fromRight eithert
-     let t    = fromLeft eithert
-     let env1 = update env "return" t
-     if isRight eithert 
-     then return $ Right $ err   
-     else if subType info t retty == False
-          then return $ Right $ "tcStmt: return type mismatch for " ++ 
-                      show (Return (Just e))
-          else return $ Left  $ env1
+tcStmt info ctx env retty (Return (Just e)) = 
+  do (ty, expr) <- tcExp info env e
+     let env1 = update env "return" ty
+     if subType info ty retty == False
+       then throwError ("tcStmt: return type mismatch for " ++ 
+                        show (Return (Just e)))
+       else return $ (env1, Return (Just e))
 
-tcStmt info env retty (Seq s1 s2) =
-  do either1 <- tcStmt info env retty s1
-     let env1 = fromLeft either1
-     if isRight either1
-     then return $ either1
-     else if isJust (lookupEnv (snd env1) "return") 
-          then return $ Right $ "tcStmt: dead code after " ++ show s1
-          else tcStmt info env1 retty s2
+tcStmt info ctx env retty (Seq s1 s2) =
+  do (env1, stmt1) <- tcStmt info ctx env retty s1
+     if isJust (lookupEnv env1 "return")
+       then throwError ("tcStmt: dead code after " ++ show s1)
+       else tcStmt info ctx env1 retty s2
 
-tcStmt info env retty (NoStmt) = return $ Left $ env
+tcStmt info ctx env retty (NoStmt) = return $ (env, NoStmt)
 
-tcStmt info env retty (For maybetyn x init cond upd s) =
+tcStmt info ctx env retty (For maybetyn x init cond upd s) =
   do let (ty,n) = fromJust maybetyn
      let env' = if isJust maybetyn then update env x ty else env
-     eitherinit <- tcExp info (snd env') (Assign (Var x) init)
-     eitherbool <- tcExp info (snd env') cond
-     eitherupd  <- tcExp info (snd env') upd
-     eitherfor  <- tcStmt info env' retty s
-     if isRight eitherinit
-        then return $ Right $ fromRight eitherinit ++ " in " ++ show (Assign (Var x) init)
-        else if isRight eitherbool 
-                then return $ Right $ fromRight $ eitherbool
-                else if eqType (TypeName "boolean") (fromLeft eitherbool) == False
-                        then return $ Right $ "tcstmt: type  mismatch in " ++ show cond
-                        else if isRight eitherupd
-                                then return $ Right $ fromRight $ eitherupd
-                                else if isRight eitherfor
-                                        then return eitherfor
-                                        else return $ Left $ env -- Restore the environment
+     (initty, initexpr) <- tcExp  info env' (Assign (Var x) init)
+     (condty, condexpr) <- tcExp  info env' cond
+     (updty,  updexpr)  <- tcExp  info env' upd
+     (env1,   stmt1)    <- tcStmt info ctx env' retty s
+     if eqType (TypeName "boolean") condty == False
+       then throwError ("tcstmt: not boolean type for " ++ show cond)
+       else return $ (env, (For maybetyn x initexpr condexpr updexpr stmt1))
+                           -- Restore the environment
 
-tcStmt info env retty (While e s) = 
-  do eitherty <- tcExp info (snd env) e
-     let ty = fromLeft eitherty
-     eitherenv <- tcStmt info env retty s
-     if isRight eitherty
-        then return $ Right $ fromRight eitherty
-        else if isRight eitherenv 
-             then return $ eitherenv 
-             else return $ Left $ env  -- Restore the environment
+tcStmt info ctx env retty (While e s) = 
+  do (ty,   expr)  <- tcExp info env e
+     (env1, stmt1) <- tcStmt info ctx env retty s
+     if eqType (TypeName "boolean") ty == False
+       then throwError ("tcstmt: not boolean type for " ++ show expr)
+       else return $ (env, While expr stmt1)  -- Restore the environment
 
-tcStmt info env retty (Block s) = 
-  do eitherenv <- tcStmt info env retty s
-     let env' = 
-           if isJust (lookupEnv (snd (fromLeft eitherenv)) "return")
-           then update env "return" retty
-           else env
-     if isRight eitherenv 
-        then return eitherenv 
-        else return $ Left $ env'  -- Restore the environment
+tcStmt info ctx env retty (Block s) = 
+  do (env1, stmt1) <- tcStmt info ctx env retty s
+     let env' = if isJust (lookupEnv env1 "return")
+                then update env "return" retty else env
+     return $ (env', Block stmt1)  -- Restore the environment
+     -- TODO: something wrong here. The next statement after the block
+     -- becomes dead if the block contains a return statement.
 
 --
 isBoolean (TypeName "boolean") = True

@@ -4,9 +4,9 @@ import AST
 import Parser
 import TypeCheck
 import Analysis
--- import TypedAST
 import System.Environment
 import Data.List
+import Data.Maybe
 
 main =
   do args <- getArgs
@@ -16,9 +16,11 @@ run args =
   do css <- mapM parse args
      let cs = numProgram $ concat $ css
      putStrLn $ prprog $ cs
-     info <- typecheck cs
-     doAnalysis cs info
-     return ()
+     maybeinfoprog <- typecheck cs
+     let (info,program) = fromJust maybeinfoprog
+     if isNothing maybeinfoprog
+        then return ()
+        else doAnalysis program info
           
 parse arg =           
   do s <- readFile arg

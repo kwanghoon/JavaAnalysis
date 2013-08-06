@@ -1869,7 +1869,7 @@ happyReduction_52 (HappyTerminal (TokenVar happy_var_3))
 	_
 	(HappyAbsSyn22  happy_var_1)
 	 =  HappyAbsSyn22
-		 (Field happy_var_1 happy_var_3
+		 (Field happy_var_1 happy_var_3 Nothing
 	)
 happyReduction_52 _ _ _  = notHappyAtAll 
 
@@ -1892,7 +1892,7 @@ happyReduction_54 (_ `HappyStk`
 	(HappyAbsSyn22  happy_var_1) `HappyStk`
 	happyRest)
 	 = HappyAbsSyn22
-		 (Invoke happy_var_1 happy_var_3 happy_var_5
+		 (Invoke happy_var_1 happy_var_3 happy_var_5 Nothing
 	) `HappyStk` happyRest
 
 happyReduce_55 = happySpecReduce_3  22 happyReduction_55
@@ -1900,7 +1900,7 @@ happyReduction_55 (HappyTerminal (TokenVar happy_var_3))
 	_
 	(HappyAbsSyn35  happy_var_1)
 	 =  HappyAbsSyn22
-		 (StaticField (TypeName happy_var_1) happy_var_3
+		 (StaticField (TypeName happy_var_1) happy_var_3 Nothing
 	)
 happyReduction_55 _ _ _  = notHappyAtAll 
 
@@ -1913,7 +1913,7 @@ happyReduction_56 (_ `HappyStk`
 	(HappyAbsSyn35  happy_var_1) `HappyStk`
 	happyRest)
 	 = HappyAbsSyn22
-		 (StaticInvoke (TypeName happy_var_1) happy_var_3 happy_var_5
+		 (StaticInvoke (TypeName happy_var_1) happy_var_3 happy_var_5 Nothing
 	) `HappyStk` happyRest
 
 happyReduce_57 = happySpecReduce_0  23 happyReduction_57

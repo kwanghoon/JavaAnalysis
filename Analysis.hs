@@ -16,8 +16,8 @@ data Constraint  =
     -- Xj \subseteq Xi
   | C2 UniqueId UniqueId   
     
-    -- C_field C X f D Z = C{X}.f <: D{Z}
-  | C_field ClassName UniqueId FieldName ClassName UniqueId
+    -- C_field C{X} f D{Z} = C{X}.f <: D{Z}
+  | C_field AnnoType FieldName AnnoType
     
     -- C_fieldassign D Z C X f = D{Z} <: C{X}.f
   | C_fieldassign ClassName UniqueId FieldName ClassName UniqueId
@@ -176,6 +176,15 @@ putWorklist worklist = do
   (_,constraints,typingtable,uniqueid) <- get
   put (worklist,constraints,typingtable,uniqueid)
   
+getConstraints :: StateT AnalysisState IO Constraints
+getConstraints = do
+  (worklist,constraints,typingtable,uniqueid) <- get
+  return constraints
+  
+putConstraint :: Constraint -> StateT AnalysisState IO ()
+putConstraint constraint = do
+  (worklist,constraints,typingtable,uniqueid) <- get
+  put (worklist,constraint:constraints,typingtable,uniqueid)
   
 getFieldtyping :: ClassName -> Context -> FieldName -> StateT AnalysisState IO (Maybe AnnoType)
 getFieldtyping c ctx f = do
@@ -312,21 +321,24 @@ mkActionStmt (Seq stmt1 stmt2) = do
 --
 mkActionExpr :: Expr -> IO ActionExpr
 mkActionExpr (Var x) = return $ actionvar x
-mkActionExpr (Field e f) = return $ actionfield e f
 
+mkActionExpr (Field e f maybety) = do
+  -- TODO: Error handling in case maybety is Nothing
+  return $ actionfield e f (fromJust maybety)
 
 actionvar :: VarName -> ActionExpr
 actionvar x typingenv info context = do
   let maybeaty = lookupEnv typingenv x
-  if isNothing maybeaty
-    then actionfield (Var "this") x typingenv info context
-    else return $ (fromJust maybeaty, noEffect)
+  -- TODO: Error handling in case maybeaty is Nothing
+  return $ (fromJust maybeaty, noEffect)
          
-actionfield :: Expr -> FieldName -> ActionExpr
-actionfield exp f typingenv info context = do
-  actionexp  <- liftIO $ mkActionExpr exp           -- TODO: start here!!!
-  (aty, eff) <- actionexp typingenv info context
-  return (AnnoType "" 0, eff)
+actionfield :: Expr -> FieldName -> TypeName -> ActionExpr
+actionfield exp f ty typingenv info context = do
+  actionexp  <- liftIO $ mkActionExpr exp
+  (atyexp, eff) <- actionexp typingenv info context
+  aty <- mkAnnoType ty
+  putConstraint (C_field atyexp f aty)
+  return (aty, eff)
   
   
             
