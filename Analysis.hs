@@ -10,7 +10,15 @@ import Control.Monad.State
 --
 type ObjAllocSite = UniqueId
 type Context      = [ObjAllocSite]
-data Set          = Set [UniqueId]
+data Set          = Set [Context]
+
+
+staticContext = [uniqueidforstatic]
+
+addContext :: Int -> Context -> Label -> Context
+addContext k context label = take k $ context ++ [label]
+
+length_k = 1
 
 -- Constraints
 type Constraints = [Constraint]
@@ -26,8 +34,8 @@ data Constraint  =
     -- C_field C{X} f D{Z} = C{X}.f <: D{Z}
   | C_field AnnoType FieldName AnnoType
     
-  --   -- C_fieldassign D Z C X f = D{Z} <: C{X}.f
-  -- | C_fieldassign AnnoType FieldName ClassName UniqueId
+    -- C_assign D Z C X f = D{Z} <: C{X}
+  | C_assign AnnoType AnnoType
 
     -- C_invoke C X m [S1,...,Sn] eff T = C{X}.m <: (S1,...,Sn) --eff--> T 
   | C_invoke AnnoType MethodName [AnnoType] Effect AnnoType
@@ -42,7 +50,7 @@ type AnnoMethodType = ([AnnoType], AnnoType, Effect)
 
 getAnno (AnnoType c id)        = id
 getAnno (AnnoArrayType aty id) = id
-  
+
 --
 type TypingTable = [TableEntry]
 data TableEntry = 
@@ -59,10 +67,9 @@ emptyTypingTable = []
 unionTypingTable t1 t2 = t1 ++ t2
 
 -- Effects
-data Effect = Effect [ClassName] | EffVar UniqueId | EffUnion Effect Effect
+data Effect = Eff [ClassName] | EffVar UniqueId | EffUnion Effect Effect
 
-noEffect = Effect []
-unionEffect (Effect eff1) (Effect eff2) = Effect $ nub $ eff1 ++ eff2
+noEffect = Eff []
     
 -- WorkList
 type WorkList = [(ClassName,Context,MethodName,UniqueId)]
@@ -95,6 +102,12 @@ type ActionExpr =
   -> Context
   -> StateT AnalysisState IO (AnnoType, Effect)
   
+type ActionExprs =  
+  TypingEnv
+  -> Info
+  -> Context
+  -> StateT AnalysisState IO ([AnnoType], [Effect])
+
 type MethodIdentifier = (ClassName, MethodName, UniqueId)
   
 type ActionLookupTable = [(MethodIdentifier, ActionMethod)]
@@ -354,7 +367,7 @@ mkActionStmt (Seq stmt1 stmt2) = do
     mkaction actionstmt1 actionstmt2 typingenv typingctx info context = do
       (typingenv1,effect1) <- actionstmt1 typingenv typingctx info context
       (typingenv2,effect2) <- actionstmt2 typingenv1 typingctx info context
-      let effect3 = unionEffect effect1 effect2
+      let effect3 = EffUnion effect1 effect2
       return (typingenv2, effect3)
     
 --
@@ -392,7 +405,7 @@ mkActionExpr (StaticField c f maybety) =
       cty <- mkAnnoType c
       aty <- mkAnnoType ty
       let cid = getAnno cty
-      putConstraint (C_upper cid (Set [uniqueidforstatic]))
+      putConstraint (C_upper cid (Set [staticContext]))
       putConstraint (C_field cty f aty)
       return (aty, noEffect)
   
@@ -401,24 +414,38 @@ mkActionExpr (New c es label) =
   where
     actionNew :: TypeName -> [Expr] -> Label -> ActionExpr
     actionNew c es label typingenv info context = do
-      actionexps <- liftIO $ mapM mkActionExpr es
-      atyEffs <- mapM (\actionexp -> actionexp typingenv info context) actionexps
-      let (atys, effs) = unzip atyEffs
-      cty <- mkAnnoType c
+      (atys, effs) <- mkActionExprs es typingenv info context
+      cty          <- mkAnnoType c
+      effVar       <- newEffVar
       let cid = getAnno cty
-      putConstraint (C_lower (Set [label]) cid)
-      effVar <- newEffVar
-      addInvokeConstraint c cid cty atys effVar
       let eff = EffUnion (foldr EffUnion noEffect effs) effVar
+          
+      putConstraint (C_lower (Set [addContext length_k context label]) cid)
+      addInvokeConstraint c cid cty atys effVar
       return (cty, eff)
       
     addInvokeConstraint c@(TypeName cn)  cid cty   atys eff = 
       putConstraint (C_invoke cty cn atys eff cty)
     addInvokeConstraint c@(ArrayTypeName _) cid cty atys eff = return ()
       
--- mkActionExpr (Assign e1 e2) =
---   return $ actionAssign e1 e2
---   where
---     actionAssign :: Expr -> Expr -> ActionExpr
---     actionAssign e1 e2 typingenv info context = do
+mkActionExpr (Assign e1 e2) =
+  return $ actionAssign e1 e2
+  where
+    actionAssign :: Expr -> Expr -> ActionExpr
+    actionAssign e1 e2 typingenv info context = do
+      actionexp1  <- liftIO $ mkActionExpr e1 
+      actionexp2  <- liftIO $ mkActionExpr e2 
+      (aty1,eff1) <- actionexp1 typingenv info context 
+      (aty2,eff2) <- actionexp2 typingenv info context
       
+      avoidty <- mkAnnoType (TypeName "void")
+      let eff =  EffUnion eff1 eff2
+      return (avoidty, eff)
+      
+mkActionExprs :: [Expr] -> ActionExprs
+mkActionExprs es typingenv info context = do
+  actionexps <- liftIO $ mapM mkActionExpr es
+  atyEffs    <- mapM (\actionexp -> actionexp typingenv info context) actionexps
+  let (atys, effs) = unzip atyEffs
+  return (atys, effs)
+  

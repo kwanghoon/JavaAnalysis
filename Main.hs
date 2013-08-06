@@ -102,4 +102,7 @@ tc_refl = map ("./sample/reflection/" ++)
             "ReflectTest.java"
           ]
           
-          
+tc_java = map ("./sample/java/" ++)
+          [
+            "Lhs.java"
+          ]         

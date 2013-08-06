@@ -427,9 +427,11 @@ tcExp info env (New t es label) =
 tcExp info env (Assign lhs e) =  -- Note the parser ensures that lhs is legal.
   do (lhsty,lhsexpr) <- tcExp info env lhs
      (ty,   expr)    <- tcExp info env e
-     if subType info ty lhsty == False
-       then throwError ("tcExp: type mismatch in " ++ show (Assign lhs e))
-       else return $ (TypeName "void", Assign lhsexpr expr)
+     if legalLhs lhs == False
+       then throwError ("tcExp: the left-hand side not assignable: " ++ show (Assign lhs e)) 
+       else if subType info ty lhsty == False
+            then throwError ("tcExp: type mismatch in " ++ show (Assign lhs e))
+            else return $ (TypeName "void", Assign lhsexpr expr)
             
 tcExp info env (Cast tn e) =            
   do (ty, expr) <- tcExp info env e
@@ -511,6 +513,13 @@ tcExp'' info env (Prim n [e1,e2]) = -- ==, !=
      if (subType info ty1 ty2 || subType info ty2 ty1) == False
        then throwError ("tcExp: type mismatch in " ++ show (Prim n [e1,e2]))
        else return $ (TypeName "boolean", Prim n exprs)
+            
+--
+legalLhs (Var x)             = True
+legalLhs (Field _ _ _)       = True
+legalLhs (StaticField _ _ _) = True
+legalLhs (Prim "[]" _)       = True
+legalLhs _                   = False
 
 
 -- tcExp info env es = error ("Missing: " ++ show es)

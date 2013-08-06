@@ -122,7 +122,7 @@ comment s = conc ["//", " ", s]
 varNum    s = "v" ++ show s
 methodNum s = "m" ++ show s
 
-allocLabel p id = conc [" ", "/* ", show id, " */"]
+allocLabel p id = conc [" ", "/* a", show id, " */"]
 
 
 -- delimeter (Ite _ _ _) = ""
