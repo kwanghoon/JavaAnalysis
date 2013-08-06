@@ -4,9 +4,10 @@ import Data.List
 
 --
 type UniqueId     = Integer
-type ObjAllocSite = UniqueId
-type Context      = [ObjAllocSite]
-data Set          = Set [UniqueId]
+type Label        = Integer
+
+uniqueidforstatic = 1
+initialuniqueid   = uniqueidforstatic+1
 
 --
 static    = "static"
@@ -28,6 +29,14 @@ getUserClasses (userClasses, inheritance, fields, mtype) = userClasses
 getInheritance (userClasses, inheritance, fields, mtype) = inheritance
 getFields      (userClasses, inheritance, fields, mtype) = fields
 getMtype       (userClasses, inheritance, fields, mtype) = mtype
+
+isUserClass c ucs =     
+  not $ null $ 
+  [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_class attribs ]
+
+isUserInterface c ucs =     
+  not $ null $ 
+  [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_interface attribs ]
 
 --
 type Name     = String
@@ -63,7 +72,7 @@ data Expr =
     Var Name
   | Field Expr Name (Maybe TypeName)           -- for field type
   | StaticField TypeName Name (Maybe TypeName) -- for field type
-  | New TypeName [Expr]
+  | New TypeName [Expr] Label
   | Assign Expr Expr
   | Cast TypeName Expr
   | Invoke Expr Name [Expr] (Maybe TypeName)           -- for return type
@@ -113,6 +122,7 @@ comment s = conc ["//", " ", s]
 varNum    s = "v" ++ show s
 methodNum s = "m" ++ show s
 
+allocLabel p id = conc [" ", "/* ", show id, " */"]
 
 
 -- delimeter (Ite _ _ _) = ""
@@ -129,10 +139,12 @@ instance Show Expr where
   showsPrec p (Var n) = tabstop p . conc [n]
   showsPrec p (Field e f _) = tabstop p . conc [show e, ".", f]
   showsPrec p (StaticField c f _) = tabstop p . conc [show c, ".", f]
-  showsPrec p (New (ArrayTypeName c) [e]) =
-    tabstop p . conc (["new", " ",  show c, "[", show e, "]"])
-  showsPrec p (New c es) = 
-    tabstop p . conc (["new", " ",  show c, "("] ++ comma (map show es) ++ [")"])
+  showsPrec p (New (ArrayTypeName c) [e] label) =
+    tabstop p . conc ["new", " ",  show c, "[", show e, "]"] . 
+    allocLabel p label
+  showsPrec p (New c es label) = 
+    tabstop p . conc (["new", " ",  show c, "("] ++ comma (map show es) ++ [")"]) .
+    allocLabel p label
   showsPrec p (Assign e y) = tabstop p . conc [show e, "=", show y]
   showsPrec p (Cast c e) = tabstop p . conc ["(", show c, ")", show e]
   showsPrec p (Invoke e m ys _) = tabstop p . conc ([show e, ".", m, "("] ++ 
@@ -267,12 +279,12 @@ numMdecl (MethodDecl attrs retty n _ argdecls stmt) id =
   MethodDecl attrs retty n id argdecls' stmt'
   where
     (argdecls', n') = numArgDecls argdecls 1
-    (stmt', _)      = numStmt stmt n'
+    (stmt', _, _)      = numStmt stmt n' 1
 numMdecl (ConstrDecl n _ argdecls stmt) id =
   ConstrDecl n id argdecls' stmt'
   where
     (argdecls', n') = numArgDecls argdecls 1
-    (stmt', _)      = numStmt stmt n'
+    (stmt', _, _)      = numStmt stmt n' 1
 numMdecl (FieldDecl attrs ty n maybee) id =
   FieldDecl attrs ty n maybee
 numMdecl (AbstractMethodDecl ty n _ argdecls) id =
@@ -288,32 +300,85 @@ numArgDecls argdecls n = (argdecls', n')
     len []     = 0
     len (x:xs) = 1 + len xs
 
-numStmt :: Stmt -> UniqueId -> (Stmt, UniqueId)
-numStmt (Expr e) n      = (Expr e, n)
-numStmt (Ite e s1 s2) n = (Ite e s1' s2', n'')
+numStmt :: Stmt -> UniqueId -> UniqueId -> (Stmt, UniqueId, UniqueId)
+numStmt (Expr e) n o      = (Expr e', n, o')
   where
-    (s1',n')  = numStmt s1 n
-    (s2',n'') = numStmt s2 n'
-numStmt (LocalVarDecl ty x _ maybee) n = (LocalVarDecl ty x n maybee, n+1)
-numStmt (Return maybee) n = (Return maybee, n)
-numStmt (Seq s1 s2) n = (Seq s1' s2', n'')
+    (e',o') = numExpr e o
+numStmt (Ite e s1 s2) n o = (Ite e' s1' s2', n'', o''')
   where
-    (s1',n')  = numStmt s1 n
-    (s2',n'') = numStmt s2 n'
-numStmt (NoStmt) n = (NoStmt, n)  
-numStmt (While e s) n = (While e s', n')
+    (s1',n',o')   = numStmt s1 n o
+    (s2',n'',o'') = numStmt s2 n' o'
+    (e', o''') = numExpr e o''
+numStmt (LocalVarDecl ty x _ maybee) n o = (LocalVarDecl ty x n maybee', n+1, o') 
   where
-    (s',n')  = numStmt s n
-numStmt (For maybetyn x e1 e2 e3 s) n = (For maybetyn' x e1 e2 e3 s', n')    
+    (maybee',o') = numMaybeExpr maybee o
+numStmt (Return maybee) n o = (Return maybee', n, o')
+  where
+    (maybee',o') = numMaybeExpr maybee o
+numStmt (Seq s1 s2) n o = (Seq s1' s2', n'', o'')
+  where
+    (s1',n',o')  = numStmt s1 n o
+    (s2',n'',o'') = numStmt s2 n' o'
+numStmt (NoStmt) n o = (NoStmt, n, o)
+numStmt (While e s) n o = (While e' s', n', o'')
+  where
+    (s',n', o')  = numStmt s n o
+    (e',o'') = numExpr e o'
+numStmt (For maybetyn x e1 e2 e3 s) n o = (For maybetyn' x e1' e2' e3' s', n', o3')
   where
     (maybetyn',n1) =
       case maybetyn of
         Nothing -> (Nothing, n)
         Just (ty,_) -> (Just (ty,n), n+1)
         
-    (s',n') = numStmt s n1
-numStmt (Block s) n = (Block s', n')
+    (s',n',o') = numStmt s n1 o
+    (e1',o1') = numExpr e1 o'
+    (e2',o2') = numExpr e2 o1'
+    (e3',o3') = numExpr e3 o2'
+numStmt (Block s) n o = (Block s', n',o')
   where
-    (s',n') = numStmt s n
-                     
+    (s',n',o') = numStmt s n o
+    
+numExpr (Var n) o = (Var n, o)
+numExpr (Field e n maybety) o = (Field e' n maybety, o')
+  where
+    (e',o') = numExpr e o
+numExpr (StaticField c n maybety) o = (StaticField c n maybety, o)
+numExpr (New c es _) o = (New c es o, o') 
+  where
+    (es',o') = numExprs es (o+1)
+numExpr (Assign e1 e2) o = (Assign e1' e2', o2)
+  where
+    (e1',o1) = numExpr e1 o
+    (e2',o2) = numExpr e2 o1
+numExpr (Cast c e) o = (Cast c e', o')
+  where
+    (e',o') = numExpr e o
+numExpr (Invoke e n es maybety) o = (Invoke e' n es' maybety, o'')
+  where
+    (e',o') = numExpr e o
+    (es',o'') = numExprs es o'
+numExpr (StaticInvoke c n es maybety) o = (StaticInvoke c n es' maybety, o')
+  where    
+    (es',o') = numExprs es o
+numExpr (ConstTrue) o = (ConstTrue, o)
+numExpr (ConstFalse) o = (ConstFalse, o)
+numExpr (ConstNull) o = (ConstNull, o)
+numExpr (ConstNum s) o = (ConstNum s, o)
+numExpr (ConstLit s) o = (ConstLit s, o)
+numExpr (ConstChar s) o = (ConstChar s, o)
+numExpr (Prim n es) o = (Prim n es', o')
+  where
+    (es',o') = numExprs es o
 
+numExprs [] o = ([], o)
+numExprs (e:es) o = (e':es', o'')
+  where
+    (e',o') = numExpr e o
+    (es',o'') = numExprs es o'
+
+numMaybeExpr (Nothing) o = (Nothing, o)
+numMaybeExpr (Just e) o = (Just e', o')
+  where
+    (e',o') = numExpr e o
+    

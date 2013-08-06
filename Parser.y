@@ -149,8 +149,8 @@ primary : vars                         { $1 }
         | num                          { ConstNum $1 }
         | lit                          { ConstLit $1 }
         | char                         { ConstChar $1 }
-        | new typename '(' exprs ')'   { New (TypeName $2) $4 }
-        | new typename '[' exprs ']'   { New (ArrayTypeName (TypeName $2)) $4 }
+        | new typename '(' exprs ')'   { New (TypeName $2) $4 0 }
+        | new typename '[' exprs ']'   { New (ArrayTypeName (TypeName $2)) $4 0 }
         | '(' expr ')'                 { $2 }
         | '(' type ')' expr            { Cast $2 $4 }
         | vars '=' expr                { Assign $1 $3 }

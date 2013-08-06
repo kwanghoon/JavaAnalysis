@@ -161,15 +161,6 @@ mkMtype'' cs ucs c = mtypes
              | (c', m, id, argtys, retty, attrs, args, maybestmt) <- basicMtypes
              , c == c' ]
 
-isUserClass c ucs =     
-  not $ null $ 
-  [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_class attribs ]
-
-isUserInterface c ucs =     
-  not $ null $ 
-  [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_interface attribs ]
-
-
 -- 2. Do typecheck
     
 anyJust :: [Maybe String] -> Maybe String
@@ -424,14 +415,14 @@ tcExp info env (StaticField c f maybety) =
                               show (StaticField c f maybety))
              else return (d, StaticField c f (Just d))
                  
-tcExp info env (New t es) = 
+tcExp info env (New t es label) = 
   do tyexprs <- mapM (tcExp info env) es
      let (tys,exprs) = unzip tyexprs
      let maybektype = lookupKtype info t tys
      if isNothing maybektype 
         then throwError ("tcExp: invalid type constructor: " ++
-                         show (New t es))
-        else return $ (t, New t exprs)
+                         show (New t es label))
+        else return $ (t, New t exprs label)
             
 tcExp info env (Assign lhs e) =  -- Note the parser ensures that lhs is legal.
   do (lhsty,lhsexpr) <- tcExp info env lhs

@@ -7,24 +7,31 @@ import Data.List
 import Control.Monad.Trans (liftIO)
 import Control.Monad.State 
 
+--
+type ObjAllocSite = UniqueId
+type Context      = [ObjAllocSite]
+data Set          = Set [UniqueId]
+
 -- Constraints
 type Constraints = [Constraint]
 data Constraint  = 
     -- { r1, ... , rn } \subseteq Xi
-    C1 Set UniqueId        
+    C_lower Set UniqueId        
+    -- Xi \subseteq { r1, ... , rn }
+  | C_upper UniqueId Set 
     
     -- Xj \subseteq Xi
-  | C2 UniqueId UniqueId   
+  | C_var UniqueId UniqueId   
     
     -- C_field C{X} f D{Z} = C{X}.f <: D{Z}
   | C_field AnnoType FieldName AnnoType
     
-    -- C_fieldassign D Z C X f = D{Z} <: C{X}.f
-  | C_fieldassign ClassName UniqueId FieldName ClassName UniqueId
+  --   -- C_fieldassign D Z C X f = D{Z} <: C{X}.f
+  -- | C_fieldassign AnnoType FieldName ClassName UniqueId
 
     -- C_invoke C X m [S1,...,Sn] eff T = C{X}.m <: (S1,...,Sn) --eff--> T 
-  | C_invoke ClassName UniqueId MethodName UniqueId [AnnoType] Effect AnnoType
-
+  | C_invoke AnnoType MethodName [AnnoType] Effect AnnoType
+    
 
 -- Types annotated with a set of contexts
 data AnnoType = 
@@ -32,6 +39,9 @@ data AnnoType =
   | AnnoArrayType AnnoType UniqueId  -- C[]{Xi}[]{Xj}
 
 type AnnoMethodType = ([AnnoType], AnnoType, Effect)
+
+getAnno (AnnoType c id)        = id
+getAnno (AnnoArrayType aty id) = id
   
 --
 type TypingTable = [TableEntry]
@@ -49,7 +59,7 @@ emptyTypingTable = []
 unionTypingTable t1 t2 = t1 ++ t2
 
 -- Effects
-data Effect = Effect [ClassName]
+data Effect = Effect [ClassName] | EffVar UniqueId | EffUnion Effect Effect
 
 noEffect = Effect []
 unionEffect (Effect eff1) (Effect eff2) = Effect $ nub $ eff1 ++ eff2
@@ -119,7 +129,7 @@ doAnalysis' program info = do
   let worklist    = [] :: WorkList
   let typingtable = [] :: TypingTable
   let constraints = [] :: Constraints
-  let uniqueid    = 1  :: UniqueId    
+  let uniqueid    = initialuniqueid  :: UniqueId    
   let state       = (worklist, constraints, typingtable, uniqueid)
   actionlookuptable <- mkActionProgram program
   (_, state1) <- runStateT (doWork info actionlookuptable) state
@@ -155,16 +165,22 @@ doWork' info actionlookuptable (c,ctx,m,id) = do
             doWork info actionlookuptable
             
 --
-getNewid :: StateT AnalysisState IO UniqueId
-getNewid = do
+newId :: StateT AnalysisState IO UniqueId
+newId = do
   (worklist,constraints,typingtable,uniqueid) <- get
   put (worklist,constraints,typingtable,uniqueid+1)
   return uniqueid
   
-getNewids :: [a] -> StateT AnalysisState IO [UniqueId]
-getNewids ls = mapM f ls
+newIds :: [a] -> StateT AnalysisState IO [UniqueId]
+newIds ls = mapM f ls
   where
-    f _ = getNewid
+    f _ = newId
+    
+newEffVar :: StateT AnalysisState IO Effect
+newEffVar = do
+  (worklist,constraints,typingtable,uniqueid) <- get
+  put (worklist,constraints,typingtable,uniqueid+1)
+  return (EffVar uniqueid)
 
 getWorklist :: StateT AnalysisState IO WorkList
 getWorklist = do
@@ -231,10 +247,10 @@ getVartyping c ctx m id v vid = do
                                
 mkAnnoType :: TypeName -> StateT AnalysisState IO AnnoType
 mkAnnoType (TypeName n) = do
-  id <- getNewid
+  id <- newId
   return (AnnoType n id)
 mkAnnoType (ArrayTypeName ty) = do  
-  id <- getNewid
+  id <- newId
   aty <- mkAnnoType ty
   return (AnnoArrayType aty id)
 
@@ -248,9 +264,32 @@ lookupEnv tyenv x =  -- TODO: Excerpted from TypeCheck.hs
     []    -> Nothing
     (t:_) -> Just t
     
--- lookupFields info c f =     
-
---
+lookupFields info (TypeName c) f = lookupFields' info c f 
+lookupFields info (ArrayTypeName c) f = 
+  if f == "length"  -- The length field for arrays
+  then Just $ (TypeName "int", [])
+  else Nothing
+  
+lookupFields' info c f =
+  if isUserClass c (getUserClasses info) || 
+     isUserInterface c (getUserClasses info)
+     then lookupFields'' info c f (getFields info) (getInheritance info)
+     else lookupFields'' info c f basicFields basicInheritance
+  
+lookupFields'' info c f fields inheritance =
+  case [(e,attrs) 
+       | (d,cfs) <- fields, c==d, (e,g,attrs) <- cfs, f==g] of
+    []    -> lookupFields''' info c f inheritance
+    (p:_) -> Just p
+    
+lookupFields''' info c f inheritance =
+  case filter isJust 
+       [ lookupFields' info c2 f | (c1,c2) <- inheritance, c==c1 ]
+  of 
+    []  -> Nothing -- No such field
+    [f] -> f
+    fs  -> Nothing -- Duplicate field
+    
     
 mkActionProgram :: Program -> IO ActionLookupTable
 mkActionProgram program = do
@@ -320,25 +359,66 @@ mkActionStmt (Seq stmt1 stmt2) = do
     
 --
 mkActionExpr :: Expr -> IO ActionExpr
-mkActionExpr (Var x) = return $ actionvar x
+mkActionExpr (Var x) = 
+  return $ actionVar x
+  where
+    actionVar :: VarName -> ActionExpr
+    actionVar x typingenv info context = do
+      let maybeaty = lookupEnv typingenv x
+      -- TODO: Error handling in case maybeaty is Nothing
+      return $ (fromJust maybeaty, noEffect)
 
 mkActionExpr (Field e f maybety) = do
-  -- TODO: Error handling in case maybety is Nothing
-  return $ actionfield e f (fromJust maybety)
+  -- TODO: Error handling in case maybety is Nothing. maybety is some type by TypeCheck.hs.
+  return $ actionField e f (fromJust maybety)
+  where
+    actionField :: Expr -> FieldName -> TypeName -> ActionExpr
+    actionField exp f ty typingenv info context = do
+      actionexp  <- liftIO $ mkActionExpr exp
+      (atyexp, eff) <- actionexp typingenv info context
+      aty <- mkAnnoType ty
+      putConstraint (C_field atyexp f aty)
+      return (aty, eff)
 
-actionvar :: VarName -> ActionExpr
-actionvar x typingenv info context = do
-  let maybeaty = lookupEnv typingenv x
-  -- TODO: Error handling in case maybeaty is Nothing
-  return $ (fromJust maybeaty, noEffect)
-         
-actionfield :: Expr -> FieldName -> TypeName -> ActionExpr
-actionfield exp f ty typingenv info context = do
-  actionexp  <- liftIO $ mkActionExpr exp
-  (atyexp, eff) <- actionexp typingenv info context
-  aty <- mkAnnoType ty
-  putConstraint (C_field atyexp f aty)
-  return (aty, eff)
+mkActionExpr (StaticField c f maybety) =   
+  -- TODO: Error handling in case maybety is Nothing. maybety is some type by TypeCheck.hs.
+  return $ actionStaticfield c f (fromJust maybety)
+  where
+    actionStaticfield :: TypeName -> Name -> TypeName -> ActionExpr  
+    actionStaticfield c f ty typingenv info context = do
+      let maybefty    = lookupFields info c f
+      let (fty,attrs) = fromJust maybefty
+      -- TODO: Error handling in case maybefty is Nothing or attrs does not have static. maybefty is some type by TypeCheck.hs
+      cty <- mkAnnoType c
+      aty <- mkAnnoType ty
+      let cid = getAnno cty
+      putConstraint (C_upper cid (Set [uniqueidforstatic]))
+      putConstraint (C_field cty f aty)
+      return (aty, noEffect)
   
-  
-            
+mkActionExpr (New c es label) = 
+  return $ actionNew c es label
+  where
+    actionNew :: TypeName -> [Expr] -> Label -> ActionExpr
+    actionNew c es label typingenv info context = do
+      actionexps <- liftIO $ mapM mkActionExpr es
+      atyEffs <- mapM (\actionexp -> actionexp typingenv info context) actionexps
+      let (atys, effs) = unzip atyEffs
+      cty <- mkAnnoType c
+      let cid = getAnno cty
+      putConstraint (C_lower (Set [label]) cid)
+      effVar <- newEffVar
+      addInvokeConstraint c cid cty atys effVar
+      let eff = EffUnion (foldr EffUnion noEffect effs) effVar
+      return (cty, eff)
+      
+    addInvokeConstraint c@(TypeName cn)  cid cty   atys eff = 
+      putConstraint (C_invoke cty cn atys eff cty)
+    addInvokeConstraint c@(ArrayTypeName _) cid cty atys eff = return ()
+      
+-- mkActionExpr (Assign e1 e2) =
+--   return $ actionAssign e1 e2
+--   where
+--     actionAssign :: Expr -> Expr -> ActionExpr
+--     actionAssign e1 e2 typingenv info context = do
+      
