@@ -428,7 +428,10 @@ mkActionExpr (New c es label) =
       putConstraint (C_invoke cty cn atys eff cty)
     addInvokeConstraint c@(ArrayTypeName _) cid cty atys eff = return ()
       
-mkActionExpr (Assign e1 e2) =
+-- mkActionExpr (Assign (Prim "[]" es1) e2) =
+-- mkActionExpr (Assign (StaticField c f maybety) e2) =
+-- mkActionExpr (Assign (Field e1 f maybety) e2) =
+mkActionExpr (Assign e1@(Var x) e2) =
   return $ actionAssign e1 e2
   where
     actionAssign :: Expr -> Expr -> ActionExpr
@@ -441,6 +444,9 @@ mkActionExpr (Assign e1 e2) =
       avoidty <- mkAnnoType (TypeName "void")
       let eff =  EffUnion eff1 eff2
       return (avoidty, eff)
+      
+-- In mkActionExpr (Assign e1 e2), e1 can't be the others
+-- because the typechecker has already filtered such an illegal program.
       
 mkActionExprs :: [Expr] -> ActionExprs
 mkActionExprs es typingenv info context = do
