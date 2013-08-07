@@ -104,5 +104,6 @@ tc_refl = map ("./sample/reflection/" ++)
           
 tc_java = map ("./sample/java/" ++)
           [
+            "LocVar.java",
             "Lhs.java"
           ]         

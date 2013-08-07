@@ -164,7 +164,7 @@ instance Show Constraint where
     conc [ show aty1, " ", "<:", " ", show aty2, ".", f ]
   showsPrec p (C_invoke aty1 m atys2 eff aty2) = 
     conc $ [ show aty1, ".", m, " ", "<:", " ", 
-           "(" ] ++ comma (map show atys2) ++ [ ")", "--", show eff, "-->", show atys2 ]
+           "(" ] ++ comma (map show atys2) ++ [ ")", "--", show eff, "-->", show aty2 ]
     
 -- WorkList
 type WorkList = [(ClassName,Context,MethodName,UniqueId)]
@@ -368,6 +368,11 @@ mkAnnoType (ArrayTypeName ty) = do
   aty <- mkAnnoType ty
   return (AnnoArrayType aty id)
 
+mkAnnoArgType (ty, x, id) = do
+  aty <- mkAnnoType ty
+  return (x, aty)
+      
+
 
 --  
 lookupEnv tyenv x =  -- TODO: Excerpted from TypeCheck.hs
@@ -430,15 +435,16 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
       _ <- actionstmt typingenv typingctx info context
       return ()
       
-    mkAnnoArgType (ty, x, id) = do
-      aty <- mkAnnoType ty
-      return (x, aty)
-      
 mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
-  return [((n,m,id),mkaction actionstmt [] (n, p, is, Just m))]
+  return [((n,m,id),mkaction actionstmt (n, p, is, Just m))]
   where
-    mkaction actionstmt typingenv typingctx info context = do
+    mkaction actionstmt typingctx info context = do
+      thisaty   <- mkAnnoType (TypeName n)
+      retaty    <- mkAnnoType (TypeName n)
+      aargdecls <- mapM mkAnnoArgType argdecls
+      let id = getAnno thisaty
+      let typingenv = [("this", thisaty), ("return", retaty)] ++ aargdecls
       _ <- actionstmt typingenv typingctx info context
       return ()
   
@@ -541,8 +547,8 @@ mkActionStmt (While e stmt) = do
     mkaction actione actionstmt typingenv typingctx info context = do
       (_,eff1) <- actione typingenv info context
       (typingenv',eff2) <- actionstmt typingenv typingctx info context
-      tyenv' <- unionTyEnv info typingenv typingenv'
-      let tyenv = restrict tyenv' (domain typingenv)
+      -- tyenv' <- unionTyEnv info typingenv typingenv'
+      let tyenv = restrict typingenv' (domain typingenv)
       let eff   = EffUnion eff1 eff2
       return (tyenv, eff)
         
@@ -560,8 +566,8 @@ mkActionStmt (For maybedecl x e1 e2 e3 stmt) = do
         (_, eff2) <- actione2 typingenv' info context
         (_, eff3) <- actione3 typingenv' info context
         (typingenv'', eff4) <- actionstmt typingenv' typingctx info context
-        tyenv' <- unionTyEnv info typingenv typingenv''
-        let tyenv = restrict tyenv' (domain typingenv)
+        -- tyenv' <- unionTyEnv info typingenv typingenv''
+        let tyenv = restrict typingenv'' (domain typingenv)
         let eff = EffUnion eff1 (EffUnion eff2 (EffUnion eff3 eff4))
         return (tyenv, eff)
         

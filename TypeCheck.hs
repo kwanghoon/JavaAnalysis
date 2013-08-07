@@ -197,7 +197,9 @@ tcMdecl info (c,p,is) (AbstractMethodDecl retty m id targs) = do
                        
 tcMdecl info (c,p,is) (MethodDecl attrs retty m id targs stmt) = do
   let ctx = (c, p, is, Just m)
-  let env = ("this", TypeName c) : [(x,ty) | (ty, x, _) <- targs]
+  let env = ("this", TypeName c) 
+            -- : ("super", TypeName p)
+            : [(x,ty) | (ty, x, _) <- targs]
   (env1, stmt1) <- tcBeginStmt info ctx env retty stmt
   if isJust (lookupEnv env1 "return") == False &&
      eqType retty (TypeName "void") == False &&
@@ -208,7 +210,9 @@ tcMdecl info (c,p,is) (MethodDecl attrs retty m id targs stmt) = do
        
 tcMdecl info (c,p,is) (ConstrDecl rettyn id targs stmt) = do 
   let ctx = (c,p,is,Just c)
-  let env = ("this", TypeName c) : [(x,ty) | (ty, x, _) <- targs]
+  let env = ("this", TypeName c) 
+            -- : ("super", TypeName p)
+            : [(x,ty) | (ty, x, _) <- targs]
   (env1, stmt1) <- tcBeginStmt info ctx env (TypeName rettyn) stmt
   if (rettyn == c) == False
      then throwError ("tcMdecl: a wrong constructor name " ++ rettyn ++ 
@@ -567,14 +571,15 @@ tcStmt info ctx env retty (Seq s1 s2) =
   do (env1, stmt1) <- tcStmt info ctx env retty s1
      if isJust (lookupEnv env1 "return")
        then throwError ("tcStmt: dead code after " ++ show s1)
-       else tcStmt info ctx env1 retty s2
+       else do (env2, stmt2) <- tcStmt info ctx env1 retty s2
+               return (env2, Seq stmt1 stmt2)
 
 tcStmt info ctx env retty (NoStmt) = return $ (env, NoStmt)
 
 tcStmt info ctx env retty (For maybetyn x init cond upd s) =
   do let (ty,n) = fromJust maybetyn
      let env' = if isJust maybetyn then update env x ty else env
-     (initty, initexpr) <- tcExp  info env' (Assign (Var x) init)
+     (initty, initexpr) <- tcExp  info env init
      (condty, condexpr) <- tcExp  info env' cond
      (updty,  updexpr)  <- tcExp  info env' upd
      (env1,   stmt1)    <- tcStmt info ctx env' retty s
