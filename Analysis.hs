@@ -2,6 +2,7 @@ module Analysis where
 
 import AST
 import Library
+import Subtyping
 import Data.Maybe
 import Data.List
 import Control.Monad.Trans (liftIO)
@@ -20,36 +21,58 @@ addContext k context label = take k $ context ++ [label]
 
 length_k = 1
 
--- Constraints
-type Constraints = [Constraint]
-data Constraint  = 
-    -- { r1, ... , rn } \subseteq Xi
-    C_lower Set UniqueId        
-    -- Xi \subseteq { r1, ... , rn }
-  | C_upper UniqueId Set 
-    
-    -- Xj \subseteq Xi
-  | C_var UniqueId UniqueId   
-    
-    -- C_field C{X} f D{Z} = C{X}.f <: D{Z}
-  | C_field AnnoType FieldName AnnoType
-    
-    -- C_assign D Z C X f = D{Z} <: C{X}
-  | C_assign AnnoType AnnoType
-
-    -- C_invoke C X m [S1,...,Sn] eff T = C{X}.m <: (S1,...,Sn) --eff--> T 
-  | C_invoke AnnoType MethodName [AnnoType] Effect AnnoType
-    
-
 -- Types annotated with a set of contexts
 data AnnoType = 
     AnnoType Name UniqueId           -- C{Xi}
   | AnnoArrayType AnnoType UniqueId  -- C[]{Xi}[]{Xj}
+    
+instance Show AnnoType where    
+  showsPrec p (AnnoType n id)        = conc [ n, "{", show id, "}" ]
+  showsPrec p (AnnoArrayType aty id) = conc [ show aty, "[", "]", "{", show id, "}" ]
 
 type AnnoMethodType = ([AnnoType], AnnoType, Effect)
 
 getAnno (AnnoType c id)        = id
 getAnno (AnnoArrayType aty id) = id
+
+unionType :: Info -> AnnoType -> AnnoType -> StateT AnalysisState IO AnnoType
+unionType info (AnnoType c1 id1) (AnnoType c2 id2) 
+  | c1 == "null" = return (AnnoType c2 id2)
+  | c1 == c2 && id1 == id2 = return (AnnoType c1 id1)
+  | c1 == c2 && id1 /= id2 = do
+    id <- newId
+    putConstraint (C_var id1 id)
+    putConstraint (C_var id2 id)
+    return (AnnoType c1 id)
+  | subType info (TypeName c1) (TypeName c2) = do
+    id <- newId
+    putConstraint (C_var id1 id)
+    putConstraint (C_var id2 id)
+    return (AnnoType c2 id)
+  | subType info (TypeName c2) (TypeName c1) = do
+    id <- newId
+    putConstraint (C_var id1 id)
+    putConstraint (C_var id2 id)
+    return (AnnoType c1 id)
+    
+unionType info (AnnoArrayType c1 id1) (AnnoArrayType c2 id2) = do
+  c  <- unionType info c1 c2
+  id <- newId
+  putConstraint (C_var id1 id)
+  putConstraint (C_var id2 id)
+  return (AnnoArrayType c id)
+  
+unionType info (AnnoArrayType c1 id1) (AnnoType c2 id2) 
+  | isObjectMultiDimArray (AnnoArrayType c1 id1) && (c2 == "Object") = do
+    putConstraint (C_var id1 id2)
+    return (AnnoType c2 id2)
+  | otherwise = do
+    liftIO $ putStrLn ("unionType: something wrong with ")
+    return (AnnoType c2 id2)
+  where
+    -- cf. the equally named function in Subtyping.hs
+    isObjectMultiDimArray (AnnoArrayType c id) = isObjectMultiDimArray c 
+    isObjectMultiDimArray (AnnoType c id)      = c == "Object"
 
 --
 type TypingTable = [TableEntry]
@@ -69,7 +92,79 @@ unionTypingTable t1 t2 = t1 ++ t2
 -- Effects
 data Effect = Eff [ClassName] | EffVar UniqueId | EffUnion Effect Effect
 
+instance Show Effect where
+  showsPrec p (Eff cs)    = conc $ [ "{" ] ++ comma cs ++ [ "}" ]
+  showsPrec p (EffVar id) = conc [ show id ]
+  showsPrec p (EffUnion eff1 eff2) = conc [ show eff1, " ", "U", " ", show eff2 ]
+
 noEffect = Eff []
+    
+--
+type TypingEnv = [(Name, AnnoType)] -- cf. [(Name, TypeName)] in TypeCheck.hs
+type TypingCtx = (ClassName, Maybe ClassName, [ClassName], Maybe MethodName)
+
+addTyEnv :: (Name,AnnoType) -> TypingEnv -> TypingEnv
+addTyEnv (n,aty) typingenv = (n,aty):typingenv
+
+unionTyEnv :: Info -> TypingEnv -> TypingEnv -> StateT AnalysisState IO TypingEnv
+unionTyEnv info []               tyenv2           = return tyenv2
+unionTyEnv info ((n,aty):tyenv1) []               = return ((n,aty):tyenv1)
+unionTyEnv info ((n,aty):tyenv1) ((m,bty):tyenv2)
+  | n==m = do
+    ty    <- unionType info aty bty
+    tyenv <- unionTyEnv info tyenv1 tyenv2
+    return ((n,ty):tyenv)
+  | otherwise = do
+    tyenv  <- unionTyEnv info ((n,aty):tyenv1) tyenv2
+    tyenv' <- unionTyEnv info [(m,bty)] tyenv
+    return tyenv'
+    
+domain :: TypingEnv -> [Name]    
+domain tyenv = [ x | (x,ty) <- tyenv ]
+
+restrict :: TypingEnv -> [Name] -> TypingEnv
+restrict tyenv dom = [ (x,ty) | (x,ty) <- tyenv, x `elem` dom ]
+
+-- Constraints
+type Constraints = [Constraint]
+data Constraint  = 
+    -- { r1, ... , rn } \subseteq Xi
+    C_lower Set UniqueId        
+    -- Xi \subseteq { r1, ... , rn }
+  | C_upper UniqueId Set 
+    
+    -- Xj \subseteq Xi
+  | C_var UniqueId UniqueId   
+    
+    -- C_field C{X} f D{Z}              ===> C{X}.f <: D{Z}
+  | C_field AnnoType FieldName AnnoType
+    
+    -- C_assign D Z C X f               ===> D{Z} <: C{X}
+  | C_assign AnnoType AnnoType
+
+    -- C_assignfield C{X} D{Z}f         ===> C{X} <: D{Z}.f
+  | C_assignfield AnnoType AnnoType FieldName 
+    
+    -- C_invoke C X m [S1,...,Sn] eff T ===> C{X}.m <: (S1,...,Sn) --eff--> T 
+  | C_invoke AnnoType MethodName [AnnoType] Effect AnnoType
+    
+    
+instance Show Constraint where
+  showsPrec p (C_lower (Set s) id) = 
+    conc $ [ "{", " "] ++ comma (map show s) ++ [ "<:", " ", show id, " ", "}"]
+  showsPrec p (C_upper id (Set s)) = 
+    conc $ [ show id, " ", "<:", " ", "{", " " ] ++ comma (map show s) ++ [ " ", "}" ]
+  showsPrec p (C_var x y) = 
+    conc [ show x, " ", "<:", " ", show y ]
+  showsPrec p (C_field aty1 f aty2) = 
+    conc [ show aty1, ".", f, " ", "<:", " ", show aty2 ]
+  showsPrec p (C_assign aty1 aty2) = 
+    conc [ show aty1, " ", "<:", " ", show aty2 ]
+  showsPrec p (C_assignfield aty1 aty2 f) = 
+    conc [ show aty1, " ", "<:", " ", show aty2, ".", f ]
+  showsPrec p (C_invoke aty1 m atys2 eff aty2) = 
+    conc $ [ show aty1, ".", m, " ", "<:", " ", 
+           "(" ] ++ comma (map show atys2) ++ [ ")", "--", show eff, "-->", show atys2 ]
     
 -- WorkList
 type WorkList = [(ClassName,Context,MethodName,UniqueId)]
@@ -102,12 +197,6 @@ type ActionExpr =
   -> Context
   -> StateT AnalysisState IO (AnnoType, Effect)
   
-type ActionExprs =  
-  TypingEnv
-  -> Info
-  -> Context
-  -> StateT AnalysisState IO ([AnnoType], [Effect])
-
 type MethodIdentifier = (ClassName, MethodName, UniqueId)
   
 type ActionLookupTable = [(MethodIdentifier, ActionMethod)]
@@ -136,22 +225,31 @@ lookupVarTyping typingtable c ctx m id v vid =
   
 --
 doAnalysis :: Program -> Info -> IO ()
-doAnalysis program info = return ()
-
-doAnalysis' program info = do
+doAnalysis program info = do
   let worklist    = [] :: WorkList
   let typingtable = [] :: TypingTable
   let constraints = [] :: Constraints
   let uniqueid    = initialuniqueid  :: UniqueId    
   let state       = (worklist, constraints, typingtable, uniqueid)
   actionlookuptable <- mkActionProgram program
-  (_, state1) <- runStateT (doWork info actionlookuptable) state
-  let (worklist1, constraints1, typingtable1, uniqueid1) = state1
-  (_, constraints2) <- runStateT doSolve constraints1
-  putStrLn "doAnalysis..."
-
-doSolve :: StateT Constraints IO ()
-doSolve = liftIO $ putStrLn "dosolve..."
+  prActionLookupTable info [] actionlookuptable state
+  -- (_, state1) <- runStateT (doWork info actionlookuptable) state
+  -- let (worklist1, constraints1, typingtable1, uniqueid1) = state1
+  -- (_, constraints2) <- runStateT doSolve constraints1
+  
+prActionLookupTable info context actionlookuptable initstate = do  
+  mapM_ (pr info context) actionlookuptable
+  where
+    pr info context ((c,m,id), actionmethod) = do
+      putStrLn $ concat [c, ",", m, ", ", show id, ":"]
+      (_, state) <- runStateT (actionmethod info context) initstate
+      let (_, constraints, _, _) = state
+      mapM_ pr1 (reverse constraints) -- for better readability?
+    
+    pr1 constraint = do
+      putStr   $ " - "
+      putStrLn $ show constraint
+      
 
 --
 doWork :: Info -> ActionLookupTable -> StateT AnalysisState IO ()
@@ -177,6 +275,9 @@ doWork' info actionlookuptable (c,ctx,m,id) = do
     else do action info ctx
             doWork info actionlookuptable
             
+doSolve :: StateT Constraints IO ()
+doSolve = liftIO $ putStrLn "dosolve..."
+
 --
 newId :: StateT AnalysisState IO UniqueId
 newId = do
@@ -269,12 +370,9 @@ mkAnnoType (ArrayTypeName ty) = do
 
 
 --  
-type TypingEnv = [(Name, AnnoType)] -- cf. [(Name, TypeName)] in TypeCheck.hs
-type TypingCtx = (ClassName, Maybe ClassName, [ClassName], Maybe MethodName)
-
 lookupEnv tyenv x =  -- TODO: Excerpted from TypeCheck.hs
   case [ t | (y,t) <- tyenv, x == y ] of
-    []    -> Nothing
+    []    -> error $ "no " ++ x ++ " in " ++ show tyenv
     (t:_) -> Just t
     
 lookupFields info (TypeName c) f = lookupFields' info c f 
@@ -303,7 +401,7 @@ lookupFields''' info c f inheritance =
     [f] -> f
     fs  -> Nothing -- Duplicate field
     
-    
+--
 mkActionProgram :: Program -> IO ActionLookupTable
 mkActionProgram program = do
   actionmethodss <- mapM mkActionClass program
@@ -320,11 +418,21 @@ mkActionClass (Interface n is mdecls) = do
 mkActionMDecl :: ClassInfo -> MemberDecl -> IO ActionLookupTable
 mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
-  return [((n,m,id), mkaction actionstmt [] (n, p, is, Just m))]
+  return [( (n,m,id), mkaction actionstmt (n, p, is, Just m) )]
   where
-    mkaction actionstmt typingenv typingctx info context = do
+    mkaction actionstmt typingctx info context = do
+      thisaty    <- mkAnnoType (TypeName n)
+      retaty     <- mkAnnoType retty
+      aargdecls  <- mapM mkAnnoArgType argdecls
+      let id = getAnno thisaty
+      let typingenv = [("this", thisaty), ("return", retaty)] ++ aargdecls
+      putConstraint (C_upper id (Set [context]))
       _ <- actionstmt typingenv typingctx info context
       return ()
+      
+    mkAnnoArgType (ty, x, id) = do
+      aty <- mkAnnoType ty
+      return (x, aty)
       
 mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
@@ -350,14 +458,63 @@ mkActionStmt (Expr expr) = do
       (_, effect) <- actionexpr typingenv info context
       return (typingenv, effect)
   
-mkActionStmt (NoStmt) = do
-  -- Some constratins are generated.
-  -- No new typing table entries are generated.
-  return actionext
+mkActionStmt (Ite expr stmt1 stmt2) = do
+  actionexpr  <- mkActionExpr expr
+  actionstmt1 <- mkActionStmt stmt1
+  actionstmt2 <- mkActionStmt stmt2
+  return $ mkaction actionexpr actionstmt1 actionstmt2
   where
-    actionext typingenv typingctx info context = do
-      -- put emptyTypingTable? No.
+    mkaction :: ActionExpr -> ActionStmt -> ActionStmt -> ActionStmt
+    mkaction actionexpr actionstmt1 actionstmt2 typingenv typingctx info context = do
+      (_, effe)      <- actionexpr typingenv info context
+      (tyenv1,effs1) <- actionstmt1 typingenv typingctx info context
+      (tyenv2,effs2) <- actionstmt2 typingenv typingctx info context
+      tyenv <- unionTyEnv info tyenv1 tyenv2
+      let eff   = EffUnion effe (EffUnion effs1 effs2)
+      return (tyenv, eff)
+      
+mkActionStmt (LocalVarDecl ty x id maybeexpr) = do
+  actionmaybeexpr <- mkActionMaybeExpr maybeexpr
+  return $ mkaction ty x id actionmaybeexpr
+  where
+    mkaction :: TypeName -> VarName -> UniqueId -> Maybe ActionExpr -> ActionStmt
+    mkaction ty x id maybeactionexpr typingenv typingctx info context = do
+      (atye,effe) <- doit maybeactionexpr typingenv info context
+      aty <- mkAnnoType ty
+      putConstraint (C_assign atye aty)
+      let tyenv = addTyEnv (x,aty) typingenv
+      return (tyenv, effe)
+    
+    mkActionMaybeExpr Nothing = do
+      return $ Nothing
+    mkActionMaybeExpr (Just expr) = do
+      actionexpr <- mkActionExpr expr
+      return $ Just actionexpr
+      
+    doit Nothing typingenv info context = do
+      aty <- mkAnnoType (TypeName "null")
+      return (aty, noEffect)
+    doit (Just actionexpr) typingenv info context = do
+      actionexpr typingenv info context
+      
+mkActionStmt (Return maybeexpr) = do
+  maybeaction <- mkmaybeaction maybeexpr
+  return $ mkaction maybeaction
+  
+  where
+    mkmaybeaction (Nothing) = return Nothing
+    mkmaybeaction (Just expr) = do
+      actionexpr <- mkActionExpr expr
+      return (Just actionexpr)
+      
+    mkaction :: Maybe ActionExpr -> ActionStmt
+    mkaction (Nothing) typingenv typingctx info context = do
       return (typingenv, noEffect)
+    mkaction (Just actionexpr) typingenv typingctx info context = do
+      (aty,eff) <- actionexpr typingenv info context
+      let atyret = fromJust $ lookupEnv typingenv "return"
+      putConstraint (C_assign aty atyret)
+      return (typingenv, eff)
       
 mkActionStmt (Seq stmt1 stmt2) = do
   actionstmt1 <- mkActionStmt stmt1
@@ -370,38 +527,87 @@ mkActionStmt (Seq stmt1 stmt2) = do
       let effect3 = EffUnion effect1 effect2
       return (typingenv2, effect3)
     
+mkActionStmt (NoStmt) = do
+  return actionext
+  where
+    actionext typingenv typingctx info context = do
+      return (typingenv, noEffect)
+      
+mkActionStmt (While e stmt) = do      
+  actione    <- mkActionExpr e
+  actionstmt <- mkActionStmt stmt
+  return $ mkaction actione actionstmt
+  where
+    mkaction actione actionstmt typingenv typingctx info context = do
+      (_,eff1) <- actione typingenv info context
+      (typingenv',eff2) <- actionstmt typingenv typingctx info context
+      tyenv' <- unionTyEnv info typingenv typingenv'
+      let tyenv = restrict tyenv' (domain typingenv)
+      let eff   = EffUnion eff1 eff2
+      return (tyenv, eff)
+        
+mkActionStmt (For maybedecl x e1 e2 e3 stmt) = do      
+  actione1 <- mkActionExpr e1
+  actione2 <- mkActionExpr e2
+  actione3 <- mkActionExpr e3
+  actionstmt <- mkActionStmt stmt
+  return $ mkaction maybedecl x actione1 actione2 actione3 actionstmt
+  where
+    mkaction maybedecl x actione1 actione2 actione3 actionstmt 
+      typingenv typingctx info context = do
+        (_, eff1) <- actione1 typingenv info context
+        typingenv'<- mkmaybedeclaction maybedecl x typingenv typingctx info context
+        (_, eff2) <- actione2 typingenv' info context
+        (_, eff3) <- actione3 typingenv' info context
+        (typingenv'', eff4) <- actionstmt typingenv' typingctx info context
+        tyenv' <- unionTyEnv info typingenv typingenv''
+        let tyenv = restrict tyenv' (domain typingenv)
+        let eff = EffUnion eff1 (EffUnion eff2 (EffUnion eff3 eff4))
+        return (tyenv, eff)
+        
+    mkmaybedeclaction (Nothing) x typingenv typingctx info context = 
+      return typingenv
+    mkmaybedeclaction (Just (ty, id)) x typingenv typingctx info context = do
+      aty <- mkAnnoType ty
+      let typingenv' = addTyEnv (x,aty) typingenv
+      return typingenv'
+      
+mkActionStmt (Block stmt) = do
+  actionstmt <- mkActionStmt stmt
+  return $ mkaction actionstmt
+  where
+    mkaction actionstmt typingenv typingctx info context = do
+      (_,eff) <- actionstmt typingenv typingctx info context
+      return (typingenv, eff)
+      
 --
 mkActionExpr :: Expr -> IO ActionExpr
-mkActionExpr (Var x) = 
+mkActionExpr (Var x) = do
   return $ actionVar x
   where
     actionVar :: VarName -> ActionExpr
     actionVar x typingenv info context = do
-      let maybeaty = lookupEnv typingenv x
-      -- TODO: Error handling in case maybeaty is Nothing
-      return $ (fromJust maybeaty, noEffect)
+      let aty = fromJust $ lookupEnv typingenv x -- TODO: Error handling in case maybeaty is Nothing
+      return $ (aty, noEffect)
 
 mkActionExpr (Field e f maybety) = do
-  -- TODO: Error handling in case maybety is Nothing. maybety is some type by TypeCheck.hs.
-  return $ actionField e f (fromJust maybety)
+  actionexp <- mkActionExpr e
+  return $ actionField actionexp f (fromJust maybety)
   where
-    actionField :: Expr -> FieldName -> TypeName -> ActionExpr
-    actionField exp f ty typingenv info context = do
-      actionexp  <- liftIO $ mkActionExpr exp
+    actionField :: ActionExpr -> FieldName -> TypeName -> ActionExpr
+    actionField actionexp f ty typingenv info context = do
       (atyexp, eff) <- actionexp typingenv info context
       aty <- mkAnnoType ty
       putConstraint (C_field atyexp f aty)
       return (aty, eff)
 
-mkActionExpr (StaticField c f maybety) =   
-  -- TODO: Error handling in case maybety is Nothing. maybety is some type by TypeCheck.hs.
+mkActionExpr (StaticField c f maybety) = do
   return $ actionStaticfield c f (fromJust maybety)
   where
     actionStaticfield :: TypeName -> Name -> TypeName -> ActionExpr  
     actionStaticfield c f ty typingenv info context = do
       let maybefty    = lookupFields info c f
       let (fty,attrs) = fromJust maybefty
-      -- TODO: Error handling in case maybefty is Nothing or attrs does not have static. maybefty is some type by TypeCheck.hs
       cty <- mkAnnoType c
       aty <- mkAnnoType ty
       let cid = getAnno cty
@@ -409,12 +615,14 @@ mkActionExpr (StaticField c f maybety) =
       putConstraint (C_field cty f aty)
       return (aty, noEffect)
   
-mkActionExpr (New c es label) = 
-  return $ actionNew c es label
+mkActionExpr (New c es label) = do
+  actionexps <- mapM mkActionExpr es
+  return $ actionNew c actionexps label
   where
-    actionNew :: TypeName -> [Expr] -> Label -> ActionExpr
-    actionNew c es label typingenv info context = do
-      (atys, effs) <- mkActionExprs es typingenv info context
+    actionNew :: TypeName -> [ActionExpr] -> Label -> ActionExpr
+    actionNew c actionexps label typingenv info context = do
+      atyeffs <- mapM (\actionexp -> actionexp typingenv info context) actionexps
+      let (atys,effs) = unzip atyeffs
       cty          <- mkAnnoType c
       effVar       <- newEffVar
       let cid = getAnno cty
@@ -428,30 +636,149 @@ mkActionExpr (New c es label) =
       putConstraint (C_invoke cty cn atys eff cty)
     addInvokeConstraint c@(ArrayTypeName _) cid cty atys eff = return ()
       
--- mkActionExpr (Assign (Prim "[]" es1) e2) =
--- mkActionExpr (Assign (StaticField c f maybety) e2) =
--- mkActionExpr (Assign (Field e1 f maybety) e2) =
-mkActionExpr (Assign e1@(Var x) e2) =
-  return $ actionAssign e1 e2
+mkActionExpr (Assign e1@(Var x) e2) = do
+  actionexp2 <- mkActionExpr e2
+  return $ actionAssignVar x actionexp2
   where
-    actionAssign :: Expr -> Expr -> ActionExpr
-    actionAssign e1 e2 typingenv info context = do
-      actionexp1  <- liftIO $ mkActionExpr e1 
-      actionexp2  <- liftIO $ mkActionExpr e2 
-      (aty1,eff1) <- actionexp1 typingenv info context 
+    actionAssignVar :: Name -> ActionExpr -> ActionExpr
+    actionAssignVar x actionexp2 typingenv info context = do
+      let aty1 = fromJust $ lookupEnv typingenv x
       (aty2,eff2) <- actionexp2 typingenv info context
-      
+      putConstraint (C_assign aty2 aty1)
       avoidty <- mkAnnoType (TypeName "void")
-      let eff =  EffUnion eff1 eff2
+      return (avoidty, eff2)
+      
+mkActionExpr (Assign (Field e1 f maybety) e2) = do
+  actionexp1 <- mkActionExpr e1
+  actionexp2 <- mkActionExpr e2
+  return $ actionAssignField actionexp1 f (fromJust maybety) actionexp2
+  where
+    actionAssignField :: ActionExpr -> FieldName -> TypeName -> ActionExpr -> ActionExpr
+    actionAssignField actionexp1 f ty actionexp2 typingenv info context = do
+      (aty1,eff1) <- actionexp1 typingenv info context
+      (aty2,eff2) <- actionexp2 typingenv info context
+      putConstraint (C_assignfield aty2 aty1 f)
+      avoidty <- mkAnnoType (TypeName "void")
+      let eff = EffUnion eff1 eff2
       return (avoidty, eff)
       
+mkActionExpr (Assign (StaticField c f maybety) e2) = do
+  actionexp2 <- mkActionExpr e2
+  return $ actionAssignField c f (fromJust maybety) actionexp2
+  where
+    actionAssignField :: TypeName -> FieldName -> TypeName -> ActionExpr -> ActionExpr
+    actionAssignField c f ty actionexp2 typingenv info context = do
+      (aty2,eff2) <- actionexp2 typingenv info context
+      cty <- mkAnnoType c
+      let cid = getAnno cty
+      putConstraint (C_assignfield aty2 cty f)
+      putConstraint (C_upper cid (Set [staticContext]))
+      avoidty <- mkAnnoType (TypeName "void")
+      return (avoidty, eff2)
+
+mkActionExpr (Assign (Prim "[]" [earr,eidx]) e2) = do
+  actionexparr <- mkActionExpr earr
+  actionexpidx <- mkActionExpr eidx
+  actionexp2   <- mkActionExpr e2
+  return $ actionAssignArray actionexparr actionexpidx actionexp2
+  where
+    actionAssignArray :: ActionExpr -> ActionExpr -> ActionExpr -> ActionExpr 
+    actionAssignArray actionexparr actionexpidx actionexp2 typingenv info context = do
+      (atyarr,effarr) <- actionexparr typingenv info context
+      (atyidx,effidx) <- actionexpidx typingenv info context
+      (aty2,  eff2)   <- actionexp2   typingenv info context
+      let AnnoArrayType atyelem id = atyarr
+      putConstraint (C_assign aty2 atyelem)
+      avoidty <- mkAnnoType (TypeName "void")
+      let eff = EffUnion effarr (EffUnion effidx eff2)
+      return (avoidty, eff)
+
 -- In mkActionExpr (Assign e1 e2), e1 can't be the others
 -- because the typechecker has already filtered such an illegal program.
       
-mkActionExprs :: [Expr] -> ActionExprs
-mkActionExprs es typingenv info context = do
-  actionexps <- liftIO $ mapM mkActionExpr es
-  atyEffs    <- mapM (\actionexp -> actionexp typingenv info context) actionexps
-  let (atys, effs) = unzip atyEffs
-  return (atys, effs)
+mkActionExpr (Cast c e) = do
+  actionexp <- mkActionExpr e
+  return $ actionCast c actionexp
+  where
+    actionCast :: TypeName -> ActionExpr -> ActionExpr
+    actionCast c actionexp typingenv info context = do
+      (aty,eff) <- actionexp typingenv info context
+      let cty = mkCast c aty
+      return (cty, eff)
+      
+mkActionExpr (Invoke e m es maybety) = do
+  actionexp  <- mkActionExpr e
+  actionexps <- mapM mkActionExpr es
+  return $ actionInvoke actionexp m actionexps (fromJust maybety)
+  where
+    actionInvoke :: ActionExpr -> MethodName -> [ActionExpr] -> TypeName -> ActionExpr
+    actionInvoke actionexp m actionexps ty typingenv info context = do
+      (atye,effe) <- actionexp typingenv info context
+      atyeffes    <- mapM (\actionexp -> actionexp typingenv info context) actionexps
+      aty         <- mkAnnoType ty
+      effm        <- newEffVar
+      let (atyes,effes) = unzip atyeffes
+      let id            = getAnno aty
+      let eff           = foldr EffUnion effe effes
+          
+      putConstraint (C_invoke atye m atyes effm aty)
+      return (aty, eff)
+      
+mkActionExpr (StaticInvoke c m es maybety) = do      
+  actionexps <- mapM mkActionExpr es
+  return $ actionStaticinvoke c m actionexps (fromJust maybety)
+  where
+    actionStaticinvoke :: TypeName -> MethodName -> [ActionExpr] -> TypeName -> ActionExpr
+    actionStaticinvoke c m actionexps ty typingenv info context = do
+      atyeffs <- mapM (\actionexp -> actionexp typingenv info context) actionexps
+      let (atyes,effes) = unzip atyeffs
+      cty  <- mkAnnoType c
+      aty  <- mkAnnoType ty
+      effm <- newEffVar
+      let cid = getAnno cty
+      let eff = foldr EffUnion noEffect effes
+          
+      putConstraint (C_upper cid (Set [staticContext]))
+      putConstraint (C_invoke cty m atyes effm aty)
+      return (aty, eff)
+      
+mkActionExpr (ConstTrue) = do
+  return $ actionConst (TypeName "boolean")
+
+mkActionExpr (ConstFalse) = do
+  return $ actionConst (TypeName "boolean")
+
+mkActionExpr (ConstNull) = do
+  return $ actionConst (TypeName "null")
+      
+mkActionExpr (ConstNum s) = do
+  return $ actionConst (TypeName "int")
   
+mkActionExpr (ConstLit s label) = do  
+  return $ actionConst (TypeName "String")
+  where
+    actionLit :: Label -> ActionExpr
+    actionLit label typingenv info context = do
+      aty <- mkAnnoType (TypeName "String")
+      let id = getAnno aty
+      putConstraint (C_lower (Set [addContext length_k context label]) id)
+      return (aty, noEffect)
+      
+
+mkActionExpr (ConstChar s) = do  
+  return $ actionConst (TypeName "char")
+
+mkActionExpr (Prim n es) = do
+  return $ actionConst (TypeName "char")
+
+actionConst ty typingenv info context = do
+  aty <- mkAnnoType ty
+  return (aty, noEffect)
+
+      
+
+--      
+mkCast :: TypeName -> AnnoType -> AnnoType
+mkCast (TypeName c)       (AnnoType d id)        = AnnoType c id
+mkCast (TypeName c)       (AnnoArrayType aty id) = AnnoType c id
+mkCast (ArrayTypeName ty) (AnnoArrayType aty id) = AnnoArrayType (mkCast ty aty) id

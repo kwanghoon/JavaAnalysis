@@ -1762,7 +1762,7 @@ happyReduction_39 _  = notHappyAtAll
 happyReduce_40 = happySpecReduce_1  21 happyReduction_40
 happyReduction_40 (HappyTerminal (TokenLit happy_var_1))
 	 =  HappyAbsSyn21
-		 (ConstLit happy_var_1
+		 (ConstLit happy_var_1 0
 	)
 happyReduction_40 _  = notHappyAtAll 
 
@@ -2217,7 +2217,7 @@ happyReduction_89 _  = notHappyAtAll
 happyReduce_90 = happySpecReduce_1  33 happyReduction_90
 happyReduction_90 (HappyTerminal (TokenLit happy_var_1))
 	 =  HappyAbsSyn33
-		 (ConstLit happy_var_1
+		 (ConstLit happy_var_1 0
 	)
 happyReduction_90 _  = notHappyAtAll 
 

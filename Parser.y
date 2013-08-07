@@ -147,7 +147,7 @@ primary : vars                         { $1 }
         | false                        { ConstFalse }
         | null                         { ConstNull }
         | num                          { ConstNum $1 }
-        | lit                          { ConstLit $1 }
+        | lit                          { ConstLit $1 0 }
         | char                         { ConstChar $1 }
         | new typename '(' exprs ')'   { New (TypeName $2) $4 0 }
         | new typename '[' exprs ']'   { New (ArrayTypeName (TypeName $2)) $4 0 }
@@ -221,7 +221,7 @@ therestexprs
         | expr ',' therestexprs         { $1 : $3 }
 
 arg     : vars  { $1 }
-        | lit   { ConstLit $1 }
+        | lit   { ConstLit $1 0 }
         | char  { ConstChar $1 }
         | num   { ConstNum $1 }
         | true  { ConstTrue }

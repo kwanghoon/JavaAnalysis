@@ -2,6 +2,7 @@ module TypeCheck where
 
 import AST
 import Library
+import Subtyping
 import Data.Maybe
 import Data.List
 import Data.Either
@@ -163,48 +164,16 @@ mkMtype'' cs ucs c = mtypes
 
 -- 2. Do typecheck
     
-anyJust :: [Maybe String] -> Maybe String
-anyJust maybes =
-  case anyJust' maybes of
-    [] -> Nothing
-    l  -> Just (head l)
-  where
-    anyJust' [] = []
-    anyJust' (Nothing : maybes) = anyJust' maybes
-    anyJust' (Just x  : maybes) = x : anyJust' maybes
+-- anyJust :: [Maybe String] -> Maybe String
+-- anyJust maybes =
+--   case anyJust' maybes of
+--     [] -> Nothing
+--     l  -> Just (head l)
+--   where
+--     anyJust' [] = []
+--     anyJust' (Nothing : maybes) = anyJust' maybes
+--     anyJust' (Just x  : maybes) = x : anyJust' maybes
     
--- [Subtyping relationship]
--- 1. C <: D  if C=D or C <: C' and C' <:D
--- 2. C[]^i <: D[]^i if C <: D for i>=0    
--- 3. Object[]^i <: Object[]^j if j<=i for i,j>=0
---    
-subType info (TypeName c) (TypeName d) = 
-  c == "null" || 
-  c == d || 
-  or [ subType info (TypeName pc) (TypeName d) 
-     | (cc,pc) <- inheritance, cc == c ] || 
-  or [ subType info (TypeName pc) (TypeName d) 
-     | (cc,pc) <- basicInheritance, cc == c ]
-  where
-    inheritance = getInheritance info
-subType info (ArrayTypeName c) (ArrayTypeName d) = subType info c d
-subType info (ArrayTypeName c) (TypeName d) =
-  d == "Object" && isObjectMultiDimArray (ArrayTypeName c)
-subType info _ _ = error "subType: Unsupported"   
-
-subTypes info tys1 tys2 =
-  length tys1 == length tys2 &&
-  all (True==) [subType info t1 t2 | (t1,t2) <- zip tys1 tys2]
-
-isObjectMultiDimArray (ArrayTypeName d) = isObjectMultiDimArray d
-isObjectMultiDimArray (TypeName c) = c == "Object"
-    
-
-subMtype info (targs1, tret1) (targs2, tret2) =
-  length targs1 == length targs2 &&
-  all (True==) [subType info t1 t2 | (t1,t2) <- zip targs2 targs1] &&
-  subType info tret1 tret2
-  
 --
 tcProgram :: Info -> Program -> ErrorT TCError IO Program
 tcProgram info program = 
@@ -467,7 +436,7 @@ tcExp info env (ConstTrue)  = return $ (TypeName "boolean", ConstTrue)
 tcExp info env (ConstFalse) = return $ (TypeName "boolean", ConstFalse)
 tcExp info env (ConstNull) = return $ (TypeName "null", ConstNull) -- TODO: null type
 tcExp info env (ConstNum n) = return $ (TypeName "int", ConstNum n)
-tcExp info env (ConstLit s) = return $ (TypeName "String", ConstLit s)
+tcExp info env (ConstLit s label) = return $ (TypeName "String", ConstLit s label)
 tcExp info env (ConstChar s) = return $ (TypeName "char", ConstChar s)
 tcExp info env (Prim "[]" [e1,e2]) = 
   do (ty1, expr1) <- tcExp info env e1
@@ -477,13 +446,13 @@ tcExp info env (Prim "[]" [e1,e2]) =
                         show (Prim "[]" [e1,e2]))
        else return $ (elemType ty1, Prim "[]" [expr1,expr2])
 
-tcExp info env (Prim "[]=" [e1, e2]) = 
-  do (ty1, expr1) <- tcExp info env e1
-     (ty2, expr2) <- tcExp info env e2
-     if subType info ty2 ty1 == False
-       then throwError ("tcExp: not assignable type: " ++ 
-                        show (Prim "[]=" [e1, e2]))
-       else return $ (TypeName "void", Prim "[]=" [expr1,expr2])
+-- tcExp info env (Prim "[]=" [e1, e2]) = 
+--   do (ty1, expr1) <- tcExp info env e1
+--      (ty2, expr2) <- tcExp info env e2
+--      if subType info ty2 ty1 == False
+--        then throwError ("tcExp: not assignable type: " ++ 
+--                         show (Prim "[]=" [e1, e2]))
+--        else return $ (TypeName "void", Prim "[]=" [expr1,expr2])
         
 tcExp info env (Prim "super" es) = 
   do throwError ("tcExp: misplaced super call: " ++ show (Prim "super" es))
@@ -515,7 +484,7 @@ tcExp'' info env (Prim n [e1,e2]) = -- ==, !=
        else return $ (TypeName "boolean", Prim n exprs)
             
 --
-legalLhs (Var x)             = True
+legalLhs (Var x)             = x /= "this"
 legalLhs (Field _ _ _)       = True
 legalLhs (StaticField _ _ _) = True
 legalLhs (Prim "[]" _)       = True
@@ -592,7 +561,7 @@ tcStmt info ctx env retty (Return (Just e)) =
      if subType info ty retty == False
        then throwError ("tcStmt: return type mismatch for " ++ 
                         show (Return (Just e)))
-       else return $ (env1, Return (Just e))
+       else return $ (env1, Return (Just expr))
 
 tcStmt info ctx env retty (Seq s1 s2) =
   do (env1, stmt1) <- tcStmt info ctx env retty s1

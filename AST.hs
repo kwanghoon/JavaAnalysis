@@ -10,9 +10,9 @@ uniqueidforstatic = 1
 initialuniqueid   = uniqueidforstatic+1
 
 --
-static    = "static"
-abstract  = "abstract"
-java_class    = "class"
+static         = "static"
+abstract       = "abstract"
+java_class     = "class"
 java_interface = "interface"
 
 -- For typechecking
@@ -81,14 +81,14 @@ data Expr =
   | ConstFalse
   | ConstNull
   | ConstNum String
-  | ConstLit String
+  | ConstLit String Label
   | ConstChar String
   | Prim Name [Expr]
             
 data Stmt = 
     Expr Expr
   | Ite Expr Stmt Stmt
-  | LocalVarDecl TypeName Name UniqueId (Maybe Expr)
+  | LocalVarDecl TypeName VarName UniqueId (Maybe Expr)
   | Return (Maybe Expr)
   | Seq Stmt Stmt
   | NoStmt
@@ -122,7 +122,7 @@ comment s = conc ["//", " ", s]
 varNum    s = "v" ++ show s
 methodNum s = "m" ++ show s
 
-allocLabel p id = conc [" ", "/* a", show id, " */"]
+allocLabel p id = conc [" ", "/* a", show id, " */", " "]
 
 
 -- delimeter (Ite _ _ _) = ""
@@ -156,7 +156,7 @@ instance Show Expr where
   showsPrec p (ConstFalse) = conc ["false"]
   showsPrec p (ConstNull)  = conc ["null"]
   showsPrec p (ConstNum n) = conc [n]
-  showsPrec p (ConstLit s) = conc ["\"", s, "\""]
+  showsPrec p (ConstLit s label) = conc ["\"", s, "\""] . allocLabel p label
   showsPrec p (ConstChar s) = conc ["\'", s, "\'"]
   showsPrec p (Prim "==" [x,y]) = conc [show x, "==", show y]
   showsPrec p (Prim "!=" [x,y]) = tabstop p . conc [show x, "!=", show y]
@@ -165,7 +165,7 @@ instance Show Expr where
   showsPrec p (Prim "primStartActivity" [x]) = 
     tabstop p . conc ["primStartActivity", "(", show x, ")"]
   showsPrec p (Prim "[]" [x,y]) = tabstop p . conc [show x, "[", show y, "]"]
-  showsPrec p (Prim "[]=" [x,y]) = tabstop p . conc [show x, "=", show y]
+  -- showsPrec p (Prim "[]=" [x,y]) = tabstop p . conc [show x, "=", show y]
   showsPrec p (Prim "super" [x]) = 
     tabstop p . conc ["super", "(", show x, ")"]
   showsPrec p (Prim "<" [x,y]) = tabstop p . conc [show x, "<", show y]
@@ -365,7 +365,7 @@ numExpr (ConstTrue) o = (ConstTrue, o)
 numExpr (ConstFalse) o = (ConstFalse, o)
 numExpr (ConstNull) o = (ConstNull, o)
 numExpr (ConstNum s) o = (ConstNum s, o)
-numExpr (ConstLit s) o = (ConstLit s, o)
+numExpr (ConstLit s _) o = (ConstLit s o, o+1)
 numExpr (ConstChar s) o = (ConstChar s, o)
 numExpr (Prim n es) o = (Prim n es', o')
   where
