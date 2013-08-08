@@ -29,6 +29,9 @@ staticContext = [uniqueidforstatic]
 addContext :: Int -> Context -> Label -> Context
 addContext k context label = take k $ context ++ [label]
 
+isEmptyContext [] = True
+isEmptyContext _  = False
+
 length_k = 1
 
 -- Types annotated with a set of contexts
@@ -400,6 +403,11 @@ mkAnnoArgType (ty, x, id) = do
   aty <- mkAnnoType ty
   return (x, aty)
       
+mkVoidType = do
+  aty <- mkAnnoType (TypeName "void")
+  let id = getAnno aty
+  putConstraint (C_upper id (Set []))
+  return aty
 
 
 --  
@@ -453,15 +461,24 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
   return [( (n,m,id), mkaction actionstmt (n, p, is, Just m) )]
   where
-    mkaction actionstmt typingctx info context = do
-      thisaty    <- mkAnnoType (TypeName n)
-      retaty     <- mkAnnoType retty
-      aargdecls  <- mapM mkAnnoArgType argdecls
-      let id = getAnno thisaty
-      let typingenv = [("this", thisaty), ("return", retaty)] ++ aargdecls
-      putConstraint (C_upper id (Set [context]))
-      _ <- actionstmt typingenv typingctx info context
-      return ()
+    mkaction actionstmt typingctx info context 
+      | isEmptyContext context && elem "static" attrs == False = return ()
+      | otherwise = do
+          return ()
+          thisaty    <- mkAnnoType (TypeName n)
+          retaty     <- mkAnnoType retty
+          aargdecls  <- mapM mkAnnoArgType argdecls
+          
+          if elem "static" attrs == False 
+            then do let id = getAnno thisaty
+                    putConstraint (C_upper id (Set [context]))
+            else return ()
+          
+          let typingenv0 = if elem "static" attrs == False
+                           then [("this", thisaty)] else []
+          let typingenv = typingenv0 ++ [("return", retaty)] ++ aargdecls
+          _ <- actionstmt typingenv typingctx info context
+          return ()
       
 mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
@@ -679,7 +696,7 @@ mkActionExpr (Assign e1@(Var x) e2) = do
       let aty1 = fromJust $ lookupEnv typingenv x
       (aty2,eff2) <- actionexp2 typingenv info context
       putConstraint (C_assign aty2 aty1)
-      avoidty <- mkAnnoType (TypeName "void")
+      avoidty <- mkVoidType
       return (avoidty, eff2)
       
 mkActionExpr (Assign (Field e1 f maybety) e2) = do
@@ -692,7 +709,7 @@ mkActionExpr (Assign (Field e1 f maybety) e2) = do
       (aty1,eff1) <- actionexp1 typingenv info context
       (aty2,eff2) <- actionexp2 typingenv info context
       putConstraint (C_assignfield aty2 aty1 f)
-      avoidty <- mkAnnoType (TypeName "void")
+      avoidty <- mkVoidType
       let eff = EffUnion eff1 eff2
       return (avoidty, eff)
       
@@ -707,7 +724,7 @@ mkActionExpr (Assign (StaticField c f maybety) e2) = do
       let cid = getAnno cty
       putConstraint (C_assignfield aty2 cty f)
       putConstraint (C_upper cid (Set [staticContext]))
-      avoidty <- mkAnnoType (TypeName "void")
+      avoidty <- mkVoidType 
       return (avoidty, eff2)
 
 mkActionExpr (Assign (Prim "[]" [earr,eidx]) e2) = do
@@ -722,9 +739,9 @@ mkActionExpr (Assign (Prim "[]" [earr,eidx]) e2) = do
       (atyidx,effidx) <- actionexpidx typingenv info context
       (aty2,  eff2)   <- actionexp2   typingenv info context
       let AnnoArrayType atyelem id = atyarr
-      putConstraint (C_assign aty2 atyelem)
-      avoidty <- mkAnnoType (TypeName "void")
       let eff = EffUnion effarr (EffUnion effidx eff2)
+      putConstraint (C_assign aty2 atyelem)
+      avoidty <- mkVoidType
       return (avoidty, eff)
 
 -- In mkActionExpr (Assign e1 e2), e1 can't be the others

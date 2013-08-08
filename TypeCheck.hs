@@ -191,16 +191,15 @@ tcClass info (Interface n is mdecls) =
   do mdecls1 <- mapM (tcMdecl info (n, Nothing, is)) mdecls 
      return $ (Interface n is mdecls1)
 
--- tcMdecl :: Info -> ClassInfo -> MemberDecl -> IO (Maybe String)
 tcMdecl :: Info -> ClassInfo -> MemberDecl -> ErrorT TCError IO MemberDecl
 tcMdecl info (c,p,is) (AbstractMethodDecl retty m id targs) = do
   return (AbstractMethodDecl retty m id targs)
                        
 tcMdecl info (c,p,is) (MethodDecl attrs retty m id targs stmt) = do
   let ctx = (c, p, is, Just m)
-  let env = ("this", TypeName c) 
-            -- : ("super", TypeName p)
-            : [(x,ty) | (ty, x, _) <- targs]
+  let env0 = if elem "static" attrs == False 
+             then [("this", TypeName c)] else []
+  let env  = env0 ++ [(x,ty) | (ty, x, _) <- targs]
   (env1, stmt1) <- tcBeginStmt info ctx env retty stmt
   if isJust (lookupEnv env1 "return") == False &&
      eqType retty (TypeName "void") == False &&
@@ -212,7 +211,6 @@ tcMdecl info (c,p,is) (MethodDecl attrs retty m id targs stmt) = do
 tcMdecl info (c,p,is) (ConstrDecl rettyn id targs stmt) = do 
   let ctx = (c,p,is,Just c)
   let env = ("this", TypeName c) 
-            -- : ("super", TypeName p)
             : [(x,ty) | (ty, x, _) <- targs]
   (env1, stmt1) <- tcBeginStmt info ctx env (TypeName rettyn) stmt
   if (rettyn == c) == False
@@ -350,9 +348,13 @@ firstStmt (Ite cond s1 s2)            = Just (Ite cond s1 s2, [])
 firstStmt (LocalVarDecl t x n maybee) = Just (LocalVarDecl t x n maybee, [])
 firstStmt (Return maybee)             = Just (Return maybee, [])
 firstStmt (Seq s1 s2) = 
-  let (stmt1,therest) = fromJust $ firstStmt s1 -- TODO: Make sure that s1 contains no NoStmt
+  let (stmt1,therest) = fromJust $ firstStmt s1 
+                        -- TODO: Make sure that s1 contains no NoStmt
   in  Just (stmt1, [toStmt $ therest ++ [s1]])
 firstStmt (NoStmt) = Nothing
+firstStmt (For maybe x e1 e2 e3 s) = Just (For maybe x e1 e2 e3 s, [])
+firstStmt (While e s) = Just (While e s, [])
+firstStmt (Block s) = Just (Block s, [])
 
 isSuperCall (Expr (Prim "super" es)) = True
 isSuperCall _                        = False
@@ -363,9 +365,11 @@ tcExp info env (Var x) = do
   let maybet = lookupEnv env x
   if isJust maybet
      then return $ (fromJust maybet, Var x) 
-     else do (ty,expr) <- tcExp info env (Field (Var "this") x Nothing) 
+     else if x == "this" 
+          then throwError $ "tcExp: this unavailable"
+          else do (ty,expr) <- tcExp info env (Field (Var "this") x Nothing) 
                                `catchError` handler x
-             return (ty, expr)
+                  return (ty, expr) 
   where
     handler x s = throwError $ "tcExp: variable " ++ x ++ " not found"
 

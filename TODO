@@ -31,7 +31,7 @@
   - interface, implements type-checking (DONE)
 
 1. Semantic Analysis
-  - [TypeCheck] No use of this in static methods.
+  - [TypeCheck] No use of this in static methods. (DONE)
   - [Analysis] No constraint generation for the annotated type of this in static methods.
   - [TypeCheck] A same method declaration can occur in the multiple interfaces.
 
