@@ -30,6 +30,11 @@
   - External supply for Java library (DONE)
   - interface, implements type-checking (DONE)
 
+1. Semantic Analysis
+  - [TypeCheck] No use of this in static methods.
+  - [Analysis] No constraint generation for the annotated type of this in static methods.
+  - [TypeCheck] A same method declaration can occur in the multiple interfaces.
+
 
 1. Android Game 논문 예제 OK
 2. TOSEM 논문 예제 OK

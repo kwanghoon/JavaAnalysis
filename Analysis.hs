@@ -13,6 +13,16 @@ type ObjAllocSite = UniqueId
 type Context      = [ObjAllocSite]
 data Set          = Set [Context]
 
+instance Show Set where
+  showsPrec p (Set s) =
+    conc $ [ "{", " " ] ++ comma (map showContext s) ++ [ " ", "}" ]
+    
+showContext :: Context -> String    
+showContext []         = "empty"
+showContext [obj]      = obj_alloc_site_prefix ++ show obj
+showContext (obj:objs) = obj_alloc_site_prefix ++ show obj ++ "." ++ showContext objs
+
+obj_alloc_site_prefix = "o"
 
 staticContext = [uniqueidforstatic]
 
@@ -27,7 +37,7 @@ data AnnoType =
   | AnnoArrayType AnnoType UniqueId  -- C[]{Xi}[]{Xj}
     
 instance Show AnnoType where    
-  showsPrec p (AnnoType n id)        = conc [ n, "{", show id, "}" ]
+  showsPrec p (AnnoType n id)        = conc [ n, "{", constraint_var_prefix, show id, "}" ]
   showsPrec p (AnnoArrayType aty id) = conc [ show aty, "[", "]", "{", show id, "}" ]
 
 type AnnoMethodType = ([AnnoType], AnnoType, Effect)
@@ -94,7 +104,7 @@ data Effect = Eff [ClassName] | EffVar UniqueId | EffUnion Effect Effect
 
 instance Show Effect where
   showsPrec p (Eff cs)    = conc $ [ "{" ] ++ comma cs ++ [ "}" ]
-  showsPrec p (EffVar id) = conc [ show id ]
+  showsPrec p (EffVar id) = conc [ effect_var_prefix, show id ]
   showsPrec p (EffUnion eff1 eff2) = conc [ show eff1, " ", "U", " ", show eff2 ]
 
 noEffect = Eff []
@@ -149,13 +159,16 @@ data Constraint  =
   | C_invoke AnnoType MethodName [AnnoType] Effect AnnoType
     
     
+constraint_var_prefix = "x"
+effect_var_prefix = "e"
+
 instance Show Constraint where
-  showsPrec p (C_lower (Set s) id) = 
-    conc $ [ "{", " "] ++ comma (map show s) ++ [ "<:", " ", show id, " ", "}"]
-  showsPrec p (C_upper id (Set s)) = 
-    conc $ [ show id, " ", "<:", " ", "{", " " ] ++ comma (map show s) ++ [ " ", "}" ]
+  showsPrec p (C_lower set id) = 
+    conc $ [ show set, " ", "<=", " ", constraint_var_prefix, show id ]
+  showsPrec p (C_upper id set) = 
+    conc $ [ constraint_var_prefix, show id, " ", "<=", " ", show set ]
   showsPrec p (C_var x y) = 
-    conc [ show x, " ", "<:", " ", show y ]
+    conc [ constraint_var_prefix, show x, " ", "<=", " ", constraint_var_prefix, show y ]
   showsPrec p (C_field aty1 f aty2) = 
     conc [ show aty1, ".", f, " ", "<:", " ", show aty2 ]
   showsPrec p (C_assign aty1 aty2) = 
@@ -199,7 +212,8 @@ type ActionExpr =
   
 type MethodIdentifier = (ClassName, MethodName, UniqueId)
   
-type ActionLookupTable = [(MethodIdentifier, ActionMethod)]
+type ActionLookupTable = [ActionLookupTableEntry]
+type ActionLookupTableEntry = (MethodIdentifier, ActionMethod)
 
 lookupActionTable alist x =  -- TODO: Excerpted from TypeCheck.hs
   case [ t | (y,t) <- alist, x == y ] of
@@ -237,14 +251,23 @@ doAnalysis program info = do
   -- let (worklist1, constraints1, typingtable1, uniqueid1) = state1
   -- (_, constraints2) <- runStateT doSolve constraints1
   
-prActionLookupTable info context actionlookuptable initstate = do  
-  mapM_ (pr info context) actionlookuptable
+prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
+prActionLookupTable info context actionlookuptable initstate = do
+  (_,state) <- runStateT (foldr f (return ()) actionlookuptable) initstate
+  return ()
   where
+    f :: ActionLookupTableEntry -> StateT AnalysisState IO () -> StateT AnalysisState IO ()
+    f entry m = do pr info context entry
+                   m
+    
     pr info context ((c,m,id), actionmethod) = do
-      putStrLn $ concat [c, ",", m, ", ", show id, ":"]
-      (_, state) <- runStateT (actionmethod info context) initstate
-      let (_, constraints, _, _) = state
-      mapM_ pr1 (reverse constraints) -- for better readability?
+      constraints0 <- getConstraints
+      resetConstraints []
+      liftIO $ putStrLn $ concat [c, ",", m, ",", show id, "(", showContext context, ")", ":"]
+      _ <- actionmethod info context
+      constraints <- getConstraints
+      liftIO $ mapM_ pr1 (reverse constraints) -- reverse for better readability
+      resetConstraints (constraints ++ constraints0)
     
     pr1 constraint = do
       putStr   $ " - "
@@ -311,6 +334,11 @@ getConstraints = do
   (worklist,constraints,typingtable,uniqueid) <- get
   return constraints
   
+resetConstraints :: Constraints -> StateT AnalysisState IO ()
+resetConstraints constraints = do
+  (worklist,_,typingtable,uniqueid) <- get
+  put (worklist,constraints,typingtable,uniqueid)
+
 putConstraint :: Constraint -> StateT AnalysisState IO ()
 putConstraint constraint = do
   (worklist,constraints,typingtable,uniqueid) <- get

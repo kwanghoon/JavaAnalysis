@@ -26,6 +26,7 @@ returnResult info (Left err) = do
 returnResult info (Right program) = do  
   prTyInfo info
   putStrLn "Successfully typechecked..."
+  putStrLn ""
   return $ Just (info, program)
 
 -- 0. Print type information
