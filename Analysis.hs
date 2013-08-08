@@ -259,7 +259,8 @@ prActionLookupTable info context actionlookuptable initstate = do
   (_,state) <- runStateT (foldr f (return ()) actionlookuptable) initstate
   return ()
   where
-    f :: ActionLookupTableEntry -> StateT AnalysisState IO () -> StateT AnalysisState IO ()
+    f :: ActionLookupTableEntry -> StateT AnalysisState IO () -> StateT Analysis
+         State IO ()
     f entry m = do pr info context entry
                    m
     
