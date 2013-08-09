@@ -63,7 +63,7 @@ getIdOfVar (ty, n, id) = id
 
 data MemberDecl = MethodDecl [Attrib] TypeName Name UniqueId ArgDecls Stmt
                 | ConstrDecl Name UniqueId ArgDecls Stmt
-                | FieldDecl [Attrib] TypeName Name (Maybe Initializer)
+                | FieldDecl [Attrib] TypeName Name UniqueId (Maybe Initializer)
                 | AbstractMethodDecl TypeName Name UniqueId ArgDecls -- TODO
 
 type Initializer = Expr
@@ -121,6 +121,7 @@ comment s = conc ["//", " ", s]
 
 varNum    s = "v" ++ show s
 methodNum s = "m" ++ show s
+fieldNum s = "f" ++ show s
 
 allocLabel p id = conc [" ", "/* a", show id, " */", " "]
 
@@ -234,11 +235,13 @@ instance Show MemberDecl where
     conc ["\n"] .
     showsPrec (p+1) s . 
     tabstop p . conc ["}", "\n"]
-  showsPrec p (FieldDecl attrs c x maybei) = 
+  showsPrec p (FieldDecl attrs c x id maybei) = 
     tabstop p . conc (comma attrs) .
     conc [show c, " ", x] . 
     opt maybei (\i -> conc ["=", show i]) .
-    conc [";", "\n"]
+    conc [";", " "] .
+    comment (fieldNum id) . conc ["\n"]
+
   showsPrec p (AbstractMethodDecl c m id params) = 
     tabstop p . 
     conc [show c, " ", m, "(", argsdecl params, ")", " ", ";", " "] . 
@@ -268,11 +271,17 @@ instance Show Class where
 numProgram program = [ numClass c | c <- program ]
 
 numClass (Class attrs n pn ins mdecls) = 
-  Class attrs n pn ins (numMdecls mdecls)
+  Class attrs n pn ins (numMdecls (defaultConstr ++ mdecls))
+  where
+    defaultConstr = 
+      case [ length argdecls | (ConstrDecl _ _ argdecls _) <- mdecls ] of
+        [] -> [] -- [ConstrDecl n 0 [] NoStmt]
+        _  -> []
 numClass (Interface n ins mdecls) =  
   Interface n ins (numMdecls mdecls)
   
-numMdecls mdecls = [ numMdecl mdecl id | (mdecl,id) <- zip mdecls [1..] ]
+numMdecls mdecls = 
+  [ numMdecl mdecl id | (mdecl,id) <- zip mdecls [1..] ]
 
 -- We assume the local variable 'this' gets the number 0.
 numMdecl (MethodDecl attrs retty n _ argdecls stmt) id = 
@@ -285,8 +294,10 @@ numMdecl (ConstrDecl n _ argdecls stmt) id =
   where
     (argdecls', n') = numArgDecls argdecls 1
     (stmt', _, _)      = numStmt stmt n' 1
-numMdecl (FieldDecl attrs ty n maybee) id =
-  FieldDecl attrs ty n maybee
+numMdecl (FieldDecl attrs ty n _ maybee) id =
+  FieldDecl attrs ty n id maybee'
+  where
+    (maybee', o') = numMaybeExpr maybee 1
 numMdecl (AbstractMethodDecl ty n _ argdecls) id =
   AbstractMethodDecl ty n id argdecls'
   where

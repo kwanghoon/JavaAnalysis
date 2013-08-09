@@ -120,7 +120,7 @@ mkFields' cs ucs c =
         Class _ _ maybec is mdecls -> (maybec, is, mdecls)
         Interface _ is mdecls -> (Nothing, is, mdecls)
         
-    dxs  = [ (d,x,attrs) | FieldDecl attrs d x maybei <- mdecls ]
+    dxs  = [ (d,x,attrs) | FieldDecl attrs d x _ maybei <- mdecls ]
     dxs1 = if isJust maybec 
            then mkFields cs ucs (fromJust maybec)
            else []
@@ -155,7 +155,7 @@ mkMtype' cs ucs c = dxs
       [(c, c, id, map fst3 args, TypeName dn, [], map snd3 args, Just s)]
     fmdecl (AbstractMethodDecl d m id args) = 
       [(c, m, id, map fst3 args, d, [abstract], map snd3 args, Nothing)]
-    fmdecl (FieldDecl _ _ _ _)              = []
+    fmdecl (FieldDecl _ _ _ _ _)            = []
     
 mkMtype'' cs ucs c = mtypes
   where
@@ -218,17 +218,17 @@ tcMdecl info (c,p,is) (ConstrDecl rettyn id targs stmt) = do
                       " in " ++ c)
      else return (ConstrDecl rettyn id targs stmt1)     
     
-tcMdecl info (c,p,is) (FieldDecl attrs t v maybei) =
+tcMdecl info (c,p,is) (FieldDecl attrs t v id maybei) =
   if isNothing maybei
-  then do return $ (FieldDecl attrs t v maybei)
+  then do return $ (FieldDecl attrs t v id maybei)
   else do 
     let initexp = fromJust maybei
     let env = []
     (ty, expr) <- tcExp info env initexp
     if subType info ty t == False
        then throwError ("tcMdecl: type error in the initializer: " ++
-                        show (FieldDecl attrs t v maybei))
-       else return $ (FieldDecl attrs t v (Just expr))
+                        show (FieldDecl attrs t v id maybei))
+       else return $ (FieldDecl attrs t v id (Just expr))
                           
 --     
 lookupEnv tyenv x =

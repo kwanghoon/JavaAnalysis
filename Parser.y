@@ -123,8 +123,8 @@ classnames
         : classname                 { [$1] }
         | classname ',' classnames  { $1 : $3 }
 
-F       : type var ';'            { \attr -> FieldDecl attr $1 $2 Nothing }
-        | type var '=' expr  ';'  { \attr -> FieldDecl attr $1 $2 (Just $4) }
+F       : type var ';'            { \attr -> FieldDecl attr $1 $2 0 Nothing }
+        | type var '=' expr  ';'  { \attr -> FieldDecl attr $1 $2 0 (Just $4) }
 
 M       : type var '(' varDecl ')' '{' stmts '}' 
            { \attr -> MethodDecl attr $1 $2 0 $4 (toStmt $7) }

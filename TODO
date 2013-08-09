@@ -35,7 +35,7 @@
   - [Analysis] No constraint generation for the annotated type of this in static methods. (DONE)
   - [TypeCheck] A same method declaration can occur in the multiple interfaces.
   - [Analysis] default constructor can be automatically added if necessary.
-  - [SyntaxAnalysis] Add a default constructor if there is no constructr in a given class.
+  - [SyntaxAnalysis] Add a default constructor if there is no constructr in a given class. (DONE, but disabled)
 
 
 1. Android Game 논문 예제 OK

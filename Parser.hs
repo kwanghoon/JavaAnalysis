@@ -14,7 +14,7 @@ import AST
 
 dummy_var_name = "$d"
 
--- parser produced by Happy Version 1.18.10
+-- parser produced by Happy Version 1.18.6
 
 data HappyAbsSyn t4 t5 t6 t7 t8 t9 t10 t11 t12 t13 t14 t15 t16 t17 t18 t19 t20 t21 t22 t23 t24 t25 t26 t27 t28 t29 t30 t31 t32 t33 t34 t35 t36 t37 t38 t39 t40
 	= HappyTerminal (Token)
@@ -1611,7 +1611,7 @@ happyReduction_23 _
 	(HappyTerminal (TokenVar happy_var_2))
 	(HappyAbsSyn34  happy_var_1)
 	 =  HappyAbsSyn16
-		 (\attr -> FieldDecl attr happy_var_1 happy_var_2 Nothing
+		 (\attr -> FieldDecl attr happy_var_1 happy_var_2 0 Nothing
 	)
 happyReduction_23 _ _ _  = notHappyAtAll 
 
@@ -1623,7 +1623,7 @@ happyReduction_24 (_ `HappyStk`
 	(HappyAbsSyn34  happy_var_1) `HappyStk`
 	happyRest)
 	 = HappyAbsSyn16
-		 (\attr -> FieldDecl attr happy_var_1 happy_var_2 (Just happy_var_4)
+		 (\attr -> FieldDecl attr happy_var_1 happy_var_2 0 (Just happy_var_4)
 	) `HappyStk` happyRest
 
 happyReduce_25 = happyReduce 8 17 happyReduction_25
@@ -2400,8 +2400,7 @@ happyNewToken action sts stk (tk:tks) =
 	_ -> happyError' (tk:tks)
 	}
 
-happyError_ 87 tk tks = happyError' tks
-happyError_ _ tk tks = happyError' (tk:tks)
+happyError_ tk tks = happyError' (tk:tks)
 
 newtype HappyIdentity a = HappyIdentity a
 happyIdentity = HappyIdentity
@@ -2763,10 +2762,9 @@ happyGoto action j tk st = action j j tk (HappyState action)
 -- Error recovery ((1) is the error token)
 
 -- parse error if we are in recovery and we fail again
-happyFail (1) tk old_st _ stk@(x `HappyStk` _) =
-     let (i) = (case x of { HappyErrorToken (i) -> i }) in
+happyFail  (1) tk old_st _ stk =
 --	trace "failing" $ 
-        happyError_ i tk
+    	happyError_ tk
 
 {-  We don't need state discarding for our restricted implementation of
     "error".  In fact, it can cause some bogus parses, so I've disabled it
@@ -2814,7 +2812,7 @@ happyDontSeq a b = b
 -- of deciding to inline happyGoto everywhere, which increases the size of
 -- the generated parser quite a bit.
 
-{-# LINE 312 "templates/GenericTemplate.hs" #-}
+{-# LINE 311 "templates/GenericTemplate.hs" #-}
 {-# NOINLINE happyShift #-}
 {-# NOINLINE happySpecReduce_0 #-}
 {-# NOINLINE happySpecReduce_1 #-}

@@ -162,7 +162,7 @@ instance Show Constraint where
   showsPrec p (C_lower set id) = 
     conc $ [ show set, " ", "<=", " ", constraint_var_prefix, show id ]
   showsPrec p (C_upper id set) = 
-    conc $ [ constraint_var_prefix, show id, " ", "<=", " ", show set ]
+    conc $ [ constraint_var_prefix, show id, " ", "=", " ", show set ]
   showsPrec p (C_var x y) = 
     conc [ constraint_var_prefix, show x, " ", "<=", " ", constraint_var_prefix, show y ]
   showsPrec p (C_field aty1 f aty2) = 
@@ -320,7 +320,7 @@ prAllocLabelTable alloctable= do
       " " ++ "new" ++ " " ++ newc
 
 -- 
-type ActionMethod = 
+type ActionMember = 
   Info 
   -> Context 
   -> StateT AnalysisState IO ()
@@ -339,10 +339,13 @@ type ActionExpr =
   -> Context
   -> StateT AnalysisState IO (AnnoType, Effect)
   
-type MethodIdentifier = (ClassName, MethodName, UniqueId)
+data ActionIdentifier = 
+    MethodActionId ClassName MethodName UniqueId
+  | FieldActionId ClassName FieldName UniqueId
+    deriving Eq
   
 type ActionLookupTable = [ActionLookupTableEntry]
-type ActionLookupTableEntry = (MethodIdentifier, ActionMethod)
+type ActionLookupTableEntry = (ActionIdentifier, ActionMember)
 
 lookupActionTable alist x =  -- TODO: Excerpted from TypeCheck.hs
   case [ t | (y,t) <- alist, x == y ] of
@@ -392,7 +395,7 @@ prActionLookupTable info context actionlookuptable initstate = do
     f entry m = do pr info context entry
                    m
     
-    pr info context ((c,m,id), actionmethod) = do
+    pr info context (MethodActionId c m id, actionmethod) = do
       constraints0 <- getConstraints
       resetConstraints []
       liftIO $ putStrLn $ concat [c, ",", m, ",", show id, "(", showContext context, ")", ":"]
@@ -400,7 +403,17 @@ prActionLookupTable info context actionlookuptable initstate = do
       constraints <- getConstraints
       liftIO $ mapM_ pr1 (reverse constraints) -- reverse for better readability
       resetConstraints (constraints ++ constraints0)
+      
+    pr info context (FieldActionId c f id, actionfield) = do
+      constraints0 <- getConstraints
+      resetConstraints []
+      liftIO $ putStrLn $ concat [c, ",", f, ",", show id, "(", showContext context, ")", ":"]
+      _ <- actionfield info context
+      constraints <- getConstraints
+      liftIO $ mapM_ pr1 (reverse constraints) -- reverse for better readability
+      resetConstraints (constraints ++ constraints0)
     
+
     pr1 constraint = do
       putStr   $ " - "
       putStrLn $ show constraint
@@ -423,7 +436,7 @@ doWork info actionlookuptable = do
              doWork' info actionlookuptable work 
           
 doWork' info actionlookuptable (c,ctx,m,id) = do
-  let maybeaction = lookupActionTable actionlookuptable (c,m,id)
+  let maybeaction = lookupActionTable actionlookuptable (MethodActionId c m id)
   let action = fromJust maybeaction
   if isNothing maybeaction 
     then liftIO $ putStrLn $ "Error: Can't find an action for: " ++ show (c,ctx,m,id)
@@ -474,40 +487,57 @@ mkActionProgram program = do
 mkActionClass :: Class -> IO ActionLookupTable
 mkActionClass (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
-  return $ concat $ actionmethodss
-  
-mkActionClass (Interface n is mdecls) = do  
+  return $ wrapFieldInit $ concat $ actionmethodss
+  where
+    wrapFieldInit actionmethods = 
+      map (wrap [ a | (FieldActionId _ _ _, a) <- actionmethods ]) actionmethods
+    
+    wrap fieldActions ((FieldActionId c f id), a) = ((FieldActionId c f id), a)
+    wrap fieldActions ((MethodActionId c m id), a) = 
+      (MethodActionId c m id, fieldInit fieldActions a)
+    
+    fieldInit fieldActions a info context = do
+      let f a m = do a info context; m
+      foldr f (return ()) fieldActions
+      a info context
+      
+mkActionClass (Interface n is mdecls) = do
   return []
     
 mkActionMDecl :: ClassInfo -> MemberDecl -> IO ActionLookupTable
 mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
-  return [( (n,m,id), mkaction actionstmt (n, p, is, Just (m,id)) )]
+  return [( MethodActionId n m id, mkaction actionstmt (n, p, is, Just (m,id)) )]
   where
     mkaction actionstmt typingctx info context 
       | isEmptyContext context && elem "static" attrs == False = return ()
-      | otherwise = do
-          return ()
-          thisaty    <- mkAnnoType (TypeName n)
-          retaty     <- mkAnnoType retty
-          aargdecls  <- mapM mkAnnoArgType argdecls
+      | otherwise = mkaction' actionstmt typingctx info context 
+                    
+    mkaction' actionstmt typingctx info context = do
+      thisaty    <- mkAnnoType (TypeName n)
+      retaty     <- mkAnnoType retty
+      aargdecls  <- mapM mkAnnoArgType argdecls
           
-          if elem "static" attrs == False 
-            then do let id = getAnno thisaty
-                    putConstraint (C_upper id (Set [context]))
-            else return ()
+      if elem "static" attrs == False 
+        then do let id = getAnno thisaty
+                putConstraint (C_upper id (Set [context]))
+        else return ()
           
-          let typingenv0 = if elem "static" attrs == False
-                           then [("this", thisaty)] else []
-          let typingenv = typingenv0 ++ [("return", retaty)] ++ aargdecls
-          _ <- actionstmt typingenv typingctx info context
-          return ()
+      let typingenv0 = if elem "static" attrs == False
+                       then [("this", thisaty)] else []
+      let typingenv = typingenv0 ++ [("return", retaty)] ++ aargdecls
+      _ <- actionstmt typingenv typingctx info context
+      return ()
       
 mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
-  return [((n,m,id),mkaction actionstmt (n, p, is, Just (m,id)))]
+  return [(MethodActionId n m id,mkaction actionstmt (n, p, is, Just (m,id)))]
   where
-    mkaction actionstmt typingctx info context = do
+    mkaction actionstmt typingctx info context 
+      | isEmptyContext context = return ()
+      | otherwise = mkaction' actionstmt typingctx info context
+                    
+    mkaction' actionstmt typingctx info context = do
       thisaty   <- mkAnnoType (TypeName n)
       retaty    <- mkAnnoType (TypeName n)
       aargdecls <- mapM mkAnnoArgType argdecls
@@ -516,8 +546,26 @@ mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
       _ <- actionstmt typingenv typingctx info context
       return ()
   
-mkActionMDecl (n, p, is) (FieldDecl attrs ty f maybee) = do
-  return []
+mkActionMDecl (n, p, is) (FieldDecl attrs ty f id maybee) = do
+  actionmaybeexpr <- mkActionMaybeExpr maybee
+  return [(FieldActionId n f id, mkaction actionmaybeexpr (n, p, is, Just (f,id)))]
+  where
+    mkaction maybeactionexpr typingctx info context 
+      | isEmptyContext context = return ()
+      | otherwise = mkaction' maybeactionexpr typingctx info context
+        
+    mkaction' Nothing typingctx info context = do 
+      nullty <- mkAnnoType (TypeName "null")
+      mkaction'' nullty typingctx info context
+    mkaction' (Just actionexpr) typingctx info context = do
+      (aty,eff) <- actionexpr [] typingctx info context -- TODO: effect?
+      mkaction'' aty typingctx info context
+      
+    mkaction'' aty typingctx info context = do
+      cty    <- mkAnnoType (TypeName n)
+      let cid = getAnno cty
+      putConstraint (C_upper cid (Set [context]))
+      putConstraint (C_assignfield aty cty f)
   
 mkActionMDecl (n, p, is) (AbstractMethodDecl retty m id argdecls) = do
   return []
@@ -559,12 +607,6 @@ mkActionStmt (LocalVarDecl ty x id maybeexpr) = do
       let tyenv = addTyEnv (x,aty) typingenv
       return (tyenv, effe)
     
-    mkActionMaybeExpr Nothing = do
-      return $ Nothing
-    mkActionMaybeExpr (Just expr) = do
-      actionexpr <- mkActionExpr expr
-      return $ Just actionexpr
-      
     doit Nothing typingenv typingctx info context = do
       aty <- mkAnnoType (TypeName "null")
       return (aty, noEffect)
@@ -572,15 +614,10 @@ mkActionStmt (LocalVarDecl ty x id maybeexpr) = do
       actionexpr typingenv typingctx info context
       
 mkActionStmt (Return maybeexpr) = do
-  maybeaction <- mkmaybeaction maybeexpr
+  maybeaction <- mkActionMaybeExpr maybeexpr
   return $ mkaction maybeaction
   
-  where
-    mkmaybeaction (Nothing) = return Nothing
-    mkmaybeaction (Just expr) = do
-      actionexpr <- mkActionExpr expr
-      return (Just actionexpr)
-      
+  where      
     mkaction :: Maybe ActionExpr -> ActionStmt
     mkaction (Nothing) typingenv typingctx info context = do
       return (typingenv, noEffect)
@@ -653,7 +690,13 @@ mkActionStmt (Block stmt) = do
     mkaction actionstmt typingenv typingctx info context = do
       (_,eff) <- actionstmt typingenv typingctx info context
       return (typingenv, eff)
-      
+    
+mkActionMaybeExpr Nothing = do
+  return $ Nothing
+mkActionMaybeExpr (Just expr) = do
+  actionexpr <- mkActionExpr expr
+  return $ Just actionexpr
+
 --
 mkActionExpr :: Expr -> IO ActionExpr
 mkActionExpr (Var x) = do
@@ -702,7 +745,10 @@ mkActionExpr (New c es label) = do
       let cid = getAnno cty
       let eff = EffUnion (foldr EffUnion noEffect effs) effVar
           
-      let (cname, _, _, Just (m,id)) = typingctx
+      let (cname,m,id) = 
+            case typingctx of
+              (cname,_,_,Just (m,id)) -> (cname, m, id)
+              -- (cname,_,_,Nothing)     -> (cname, "*", 100)
       let (TypeName newc) = c
       uniqueLabel <- putAllocTableEntry (cname, context, m, id, label) newc
       putConstraint (C_lower (Set [addContext length_k context uniqueLabel]) cid)
