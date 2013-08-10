@@ -20,7 +20,7 @@ type UserClasses = [(Name, [Attrib])]
 type Inheritance = [(Name,Name)]
 type Fields      = [(ClassName, [(TypeName, FieldName, [Attrib])])]
 type Mtypes      = [(ClassName, MethodName, UniqueId, [TypeName], TypeName, [Attrib], [VarName], Maybe Stmt)]
-type Vtypes      = [(ClassName, MethodName, UniqueId, TypeName, [Attrib], VarName)]
+type Vtypes      = [(ClassName, MethodName, UniqueId, TypeName, [Attrib], VarName, UniqueId)]
 
 type Info      = (UserClasses, Inheritance, Fields, Mtypes)
 type ClassInfo = (ClassName, Maybe ClassName, [ClassName]) -- itself, parent, interfaces
@@ -280,6 +280,8 @@ numClass (Class attrs n pn ins mdecls) =
 numClass (Interface n ins mdecls) =  
   Interface n ins (numMdecls mdecls)
   
+numThis = 0
+
 numMdecls mdecls = 
   [ numMdecl mdecl id | (mdecl,id) <- zip mdecls [1..] ]
 
@@ -287,12 +289,12 @@ numMdecls mdecls =
 numMdecl (MethodDecl attrs retty n _ argdecls stmt) id = 
   MethodDecl attrs retty n id argdecls' stmt'
   where
-    (argdecls', n') = numArgDecls argdecls 1
+    (argdecls', n') = numArgDecls argdecls (numThis+1)
     (stmt', _, _)      = numStmt stmt n' 1
 numMdecl (ConstrDecl n _ argdecls stmt) id =
   ConstrDecl n id argdecls' stmt'
   where
-    (argdecls', n') = numArgDecls argdecls 1
+    (argdecls', n') = numArgDecls argdecls (numThis+1)
     (stmt', _, _)      = numStmt stmt n' 1
 numMdecl (FieldDecl attrs ty n _ maybee) id =
   FieldDecl attrs ty n id maybee'

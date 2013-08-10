@@ -9,6 +9,21 @@ import Control.Monad.Trans (liftIO)
 import Control.Monad.State 
 
 --
+doAnalysis :: Program -> Info -> IO ()
+doAnalysis program info = do
+  let worklist    = [] :: WorkList
+  let typingtable = [] :: TypingTable
+  let constraints = [] :: Constraints
+  let alloctable  = [] :: AllocLabelTable
+  let uniqueid    = initialuniqueid  :: UniqueId    
+  let state       = (worklist, constraints, typingtable, alloctable, uniqueid)
+  actionlookuptable <- mkActionProgram program
+  prActionLookupTable info [1] actionlookuptable state
+  -- (_, state1) <- runStateT (doWork info actionlookuptable) state
+  -- let (worklist1, constraints1, typingtable1, uniqueid1) = state1
+  -- (_, constraints2) <- runStateT doSolve constraints1
+
+--
 type ObjAllocSite = UniqueId
 type Context      = [ObjAllocSite]
 data Set          = Set [Context]
@@ -110,7 +125,7 @@ mkVoidType = do
 type TypingTable = [TableEntry]
 data TableEntry = 
     -- F(C,ctx,f)=Xi
-    F ClassName Context FieldName AnnoType  
+    F ClassName Context FieldName UniqueId AnnoType  
     
     -- M(C,ctx,m,k)= (Xi1, ... , Xin) ==> Xj
   | M ClassName Context MethodName UniqueId [AnnoType] AnnoType Effect
@@ -120,6 +135,27 @@ data TableEntry =
     
 emptyTypingTable = []    
 unionTypingTable t1 t2 = t1 ++ t2
+
+prTypingTable typingtable = do
+  putStrLn "Typing table:"
+  mapM_ pr $ reverse $ typingtable
+  where
+    pr (F c context f id aty) = 
+      putStrLn (
+        " - " ++ c ++ "{" ++ showContext context ++ "}"
+        ++ "." ++ f ++ "," ++ show id 
+        ++ " = " ++ show aty )
+    pr (M c context m id atys aty eff) = 
+      putStrLn (
+        " - " ++ c ++ "{" ++ showContext context ++ "}" 
+        ++ "." ++ m ++ "," ++ show id
+        ++ " = " ++ showMethodtype atys aty eff )
+    pr (V c context m id v vid aty) =
+      putStrLn (
+        " - " ++ c ++ "{" ++ showContext context ++ "}" 
+        ++ "." ++ m ++ "," ++ show id
+        ++ "/" ++ v ++ "," ++ show vid
+        ++ " = " ++ show aty )
 
 -- Effects
 data Effect = Eff [ClassName] | EffVar UniqueId | EffUnion Effect Effect
@@ -172,8 +208,11 @@ instance Show Constraint where
   showsPrec p (C_assignfield aty1 aty2 f) = 
     conc [ show aty1, " ", "<:", " ", show aty2, ".", f ]
   showsPrec p (C_invoke aty1 m atys2 eff aty2) = 
-    conc $ [ show aty1, ".", m, " ", "<:", " ", 
-           "(" ] ++ comma (map show atys2) ++ [ ")", "--", show eff, "-->", show aty2 ]
+    conc $ [ show aty1, ".", m, " ", "<:", " ", showMethodtype atys2 aty2 eff ]
+--           "(" ] ++ comma (map show atys2) ++ [ ")", "--", show eff, "-->", show aty2 ]
+    
+showMethodtype atys aty eff = concat $
+  ["("] ++ comma (map show atys) ++ [ ")", "--", show eff, "-->", show aty]
     
 --
 type TypingEnv = [(Name, AnnoType)] -- cf. [(Name, TypeName)] in TypeCheck.hs
@@ -259,17 +298,24 @@ putConstraint constraint = do
   (worklist,constraints,typingtable,alloctable,uniqueid) <- get
   put (worklist,constraint:constraints,typingtable,alloctable,uniqueid)
   
-getFieldtyping :: ClassName -> Context -> FieldName -> StateT AnalysisState IO (Maybe AnnoType)
-getFieldtyping c ctx f = do
+getTyping :: StateT AnalysisState IO TypingTable
+getTyping = do
+  (_,_,typing,_,_) <- get
+  return typing
+  
+getFieldtyping :: ClassName -> Context -> FieldName -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
+getFieldtyping c ctx f id = do
   (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  retMaybeAnnotype $ lookupFieldTyping typingtable c ctx f
+  retMaybeAnnotype $ lookupFieldTyping typingtable c ctx f id
   
   where
     retMaybeAnnotype []  = return Nothing
     retMaybeAnnotype [h] = return $ Just h
-    retMaybeAnnotype _   = do liftIO $ putStrLn $ "getFieldtyping: duplicate field typings for " 
-                                ++ show (c,ctx,f)
-                              return Nothing
+    retMaybeAnnotype _   = do 
+      liftIO $ putStrLn $ 
+        "getFieldtyping: duplicate field typings for " 
+        ++ show (c,ctx,f)
+      return Nothing
                               
 putTyping :: TableEntry -> StateT AnalysisState IO ()
 putTyping typing = do
@@ -285,9 +331,10 @@ getMethodtyping c ctx m id = do
   where
     retMaybeAnnomtype []  = return Nothing
     retMaybeAnnomtype [h] = return $ Just h
-    retMaybeAnnomtype _   = do liftIO $ putStrLn $ "getMethodtyping: duplicate method typings for "
-                                ++ show (c,ctx,m,id)
-                               return Nothing
+    retMaybeAnnomtype _   = do
+      liftIO $ putStrLn $ "getMethodtyping: duplicate method typings for "
+        ++ show (c,ctx,m,id)
+      return Nothing
 
 getVartyping :: ClassName -> Context -> MethodName -> UniqueId -> VarName -> UniqueId 
                    -> StateT AnalysisState IO (Maybe AnnoType)
@@ -298,9 +345,10 @@ getVartyping c ctx m id v vid = do
   where
     retMaybeAnnovtype []  = return Nothing
     retMaybeAnnovtype [h] = return $ Just h
-    retMaybeAnnovtype _   = do liftIO $ putStrLn $ "getVartyping: duplicate variable typings for "
-                                ++ show (c,ctx,m,id,v,vid)
-                               return Nothing
+    retMaybeAnnovtype _   = do 
+      liftIO $ putStrLn $ "getVartyping: duplicate variable typings for "
+        ++ show (c,ctx,m,id,v,vid)
+      return Nothing
                                
 putAllocTableEntry :: AllocLabelLocation -> ClassName -> StateT AnalysisState IO Label
 putAllocTableEntry entry newc = do
@@ -342,6 +390,7 @@ type ActionExpr =
 data ActionIdentifier = 
     MethodActionId ClassName MethodName UniqueId
   | FieldActionId ClassName FieldName UniqueId
+  | VarActionId ClassName (Maybe (MethodName, UniqueId)) VarName UniqueId
     deriving Eq
   
 type ActionLookupTable = [ActionLookupTableEntry]
@@ -352,9 +401,10 @@ lookupActionTable alist x =  -- TODO: Excerpted from TypeCheck.hs
     []    -> Nothing
     (t:_) -> Just t
     
-lookupFieldTyping :: TypingTable -> ClassName -> Context -> FieldName -> [AnnoType]
-lookupFieldTyping typingtable c ctx f =
-  [ atyi | F ci ctxi fi atyi <- typingtable, c==ci && ctx==ctxi && f==fi ]
+lookupFieldTyping :: TypingTable -> ClassName -> Context -> FieldName -> UniqueId -> [AnnoType]
+lookupFieldTyping typingtable c ctx f id =
+  [ atyi | F ci ctxi fi idi atyi <- typingtable
+         , c==ci && ctx==ctxi && f==fi && id==idi ]
 
 lookupMethodTyping :: TypingTable -> ClassName -> Context -> MethodName -> UniqueId 
                       -> [AnnoMethodType]
@@ -370,30 +420,20 @@ lookupVarTyping typingtable c ctx m id v vid =
     c==ci && ctx==ctxi && m==mi && idi==id && vi==v && vidi==vid ]
   
 --
-doAnalysis :: Program -> Info -> IO ()
-doAnalysis program info = do
-  let worklist    = [] :: WorkList
-  let typingtable = [] :: TypingTable
-  let constraints = [] :: Constraints
-  let alloctable  = [] :: AllocLabelTable
-  let uniqueid    = initialuniqueid  :: UniqueId    
-  let state       = (worklist, constraints, typingtable, alloctable, uniqueid)
-  actionlookuptable <- mkActionProgram program
-  prActionLookupTable info [1] actionlookuptable state
-  -- (_, state1) <- runStateT (doWork info actionlookuptable) state
-  -- let (worklist1, constraints1, typingtable1, uniqueid1) = state1
-  -- (_, constraints2) <- runStateT doSolve constraints1
-  
 prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
 prActionLookupTable info context actionlookuptable initstate = do
+  putStrLn $ "Action lookup table for " ++ showContext context
   (_,state) <- runStateT (foldr f (return ()) actionlookuptable) initstate
-  let (_,_,_,alloctable,_) = state
+  let (_,_,typingtable,alloctable,_) = state
+  prTypingTable typingtable
   prAllocLabelTable alloctable
-  return ()
   where
-    f :: ActionLookupTableEntry -> StateT AnalysisState IO () -> StateT AnalysisState IO ()
-    f entry m = do pr info context entry
-                   m
+    f :: ActionLookupTableEntry 
+         -> StateT AnalysisState IO () 
+         -> StateT AnalysisState IO ()
+    f entry m = do 
+      pr info context entry
+      m
     
     pr info context (MethodActionId c m id, actionmethod) = do
       constraints0 <- getConstraints
@@ -489,13 +529,19 @@ mkActionClass (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
   return $ wrapFieldInit $ concat $ actionmethodss
   where
+    wrapFieldInit :: ActionLookupTable -> ActionLookupTable
     wrapFieldInit actionmethods = 
-      map (wrap [ a | (FieldActionId _ _ _, a) <- actionmethods ]) actionmethods
+      let memorizedactionmethods = map memorizedActionEntry actionmethods in
+      (map 
+       (wrap [ a | (FieldActionId _ _ _, a) <- memorizedactionmethods ])
+        memorizedactionmethods)
     
+    wrap :: [ActionMember] -> ActionLookupTableEntry -> ActionLookupTableEntry
     wrap fieldActions ((FieldActionId c f id), a) = ((FieldActionId c f id), a)
     wrap fieldActions ((MethodActionId c m id), a) = 
       (MethodActionId c m id, fieldInit fieldActions a)
     
+    fieldInit :: [ActionMember] -> ActionMember -> ActionMember
     fieldInit fieldActions a info context = do
       let f a m = do a info context; m
       foldr f (return ()) fieldActions
@@ -503,11 +549,29 @@ mkActionClass (Class attrs n p is mdecls) = do
       
 mkActionClass (Interface n is mdecls) = do
   return []
+  
+memorizedActionEntry :: ActionLookupTableEntry -> ActionLookupTableEntry 
+memorizedActionEntry ((FieldActionId c f id), a) = 
+  let check action info context = do
+        maybeaty <- getFieldtyping c context f id
+        case maybeaty of
+          Nothing -> action info context
+          Just _  -> return () 
+  in  ((FieldActionId c f id), check a)
+    
+memorizedActionEntry ((MethodActionId c m id), a) = 
+  let check action info context = do
+        maybemty <- getMethodtyping c context m id
+        case maybemty of
+          Nothing -> action info context
+          Just _  -> return ()
+  in ((MethodActionId c m id), check a)
     
 mkActionMDecl :: ClassInfo -> MemberDecl -> IO ActionLookupTable
 mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
-  return [( MethodActionId n m id, mkaction actionstmt (n, p, is, Just (m,id)) )]
+  return [( MethodActionId n m id, 
+            mkaction actionstmt (n, p, is, Just (m,id)) )]
   where
     mkaction actionstmt typingctx info context 
       | isEmptyContext context && elem "static" attrs == False = return ()
@@ -517,21 +581,31 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
       thisaty    <- mkAnnoType (TypeName n)
       retaty     <- mkAnnoType retty
       aargdecls  <- mapM mkAnnoArgType argdecls
+      eff        <- newEffVar
+      let aargtys = snd $ unzip $ aargdecls
           
-      if elem "static" attrs == False 
+      _ <-
+        if elem "static" attrs == False 
         then do let id = getAnno thisaty
                 putConstraint (C_upper id (Set [context]))
         else return ()
           
-      let typingenv0 = if elem "static" attrs == False
-                       then [("this", thisaty)] else []
+      typingenv0 <-
+        if elem "static" attrs == False
+        then -- do putTyping (V n context m id "this" numThis thisaty)
+             return [("this", thisaty)]
+        else return []
+          
       let typingenv = typingenv0 ++ [("return", retaty)] ++ aargdecls
+          
+      putTyping (M n context m id aargtys retaty eff)
       _ <- actionstmt typingenv typingctx info context
       return ()
       
 mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
-  return [(MethodActionId n m id,mkaction actionstmt (n, p, is, Just (m,id)))]
+  return [(MethodActionId n m id,
+           mkaction actionstmt (n, p, is, Just (m,id)))]
   where
     mkaction actionstmt typingctx info context 
       | isEmptyContext context = return ()
@@ -541,8 +615,13 @@ mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
       thisaty   <- mkAnnoType (TypeName n)
       retaty    <- mkAnnoType (TypeName n)
       aargdecls <- mapM mkAnnoArgType argdecls
+      eff       <- newEffVar
+      let aargtys = snd $ unzip $ aargdecls
+          
       let id = getAnno thisaty
       let typingenv = [("this", thisaty), ("return", retaty)] ++ aargdecls
+          
+      putTyping (M n context m id aargtys retaty eff)
       _ <- actionstmt typingenv typingctx info context
       return ()
   
@@ -562,8 +641,10 @@ mkActionMDecl (n, p, is) (FieldDecl attrs ty f id maybee) = do
       mkaction'' aty typingctx info context
       
     mkaction'' aty typingctx info context = do
+      fty    <- mkAnnoType ty
       cty    <- mkAnnoType (TypeName n)
       let cid = getAnno cty
+      putTyping (F n context f id fty)
       putConstraint (C_upper cid (Set [context]))
       putConstraint (C_assignfield aty cty f)
   
