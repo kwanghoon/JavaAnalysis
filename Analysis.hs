@@ -305,6 +305,11 @@ getTyping = do
   (_,_,typing,_,_) <- get
   return typing
   
+putTyping :: TableEntry -> StateT AnalysisState IO ()
+putTyping typing = do
+  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
+  put (worklist,constraints,typing:typingtable,alloctable,uniqueid)
+                              
 getFieldtyping :: ClassName -> Context -> FieldName -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
 getFieldtyping c ctx f id = do
   (worklist,constraints,typingtable,alloctable,uniqueid) <- get
@@ -318,11 +323,6 @@ getFieldtyping c ctx f id = do
         "getFieldtyping: duplicate field typings for " 
         ++ show (c,ctx,f)
       return Nothing
-                              
-putTyping :: TableEntry -> StateT AnalysisState IO ()
-putTyping typing = do
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  put (worklist,constraints,typing:typingtable,alloctable,uniqueid)
                               
 getMethodtyping :: ClassName -> Context -> MethodName -> UniqueId 
                    -> StateT AnalysisState IO (Maybe AnnoMethodType)
@@ -338,7 +338,8 @@ getMethodtyping c ctx m id = do
         ++ show (c,ctx,m,id)
       return Nothing
 
-getVartyping :: ClassName -> Context -> Maybe (MethodName,UniqueId) -> VarName -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
+getVartyping :: ClassName -> Context -> Maybe (MethodName,UniqueId) -> VarName 
+                -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
 getVartyping c ctx maybemid v vid = do
   (worklist,constraints,typingtable,alloctable,uniqueid) <- get
   retMaybeAnnovtype $ lookupVarTyping typingtable c ctx maybemid v vid
@@ -350,6 +351,11 @@ getVartyping c ctx maybemid v vid = do
       liftIO $ putStrLn $ "getVartyping: duplicate variable typings for "
         ++ show (c,ctx,maybemid,v,vid)
       return Nothing
+      
+getArgVartyping c ctx m id argdecls = do      
+  mapM g argdecls
+  where
+    g (ty,argv,argid) = getVartyping c ctx (Just (m,id)) argv argid
                                
 putAllocTableEntry :: AllocLabelLocation -> ClassName -> StateT AnalysisState IO Label
 putAllocTableEntry entry newc = do
@@ -544,7 +550,9 @@ mkActionClass info (Class attrs n p is mdecls) = do
     wrap :: [ActionMember] -> ActionLookupTable -> ActionLookupTableEntry 
             -> ActionLookupTableEntry
     wrap fieldActions varActionTable (FieldActionId c f id, a) = 
-      (FieldActionId c f id, a)
+      let varAction = head
+            [ a | (VarActionId c' Nothing "this" _, a) <- varActionTable,c==c']
+      in  (FieldActionId c f id, thisInit varAction a)
     wrap fieldActions varActionTable (MethodActionId c m id, a) = 
       let varActions = 
             [ a | (VarActionId c' (Just (m',id')) _ _, a) <- varActionTable
@@ -560,6 +568,10 @@ mkActionClass info (Class attrs n p is mdecls) = do
       let f a m = do a info context; m
       foldr f (return ()) fieldActions
       foldr f (return ()) varActions
+      a info context
+
+    thisInit varAction a info context = do
+      varAction info context
       a info context
       
 mkActionClass info (Interface n is mdecls) = do
@@ -602,11 +614,12 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
       | otherwise = mkaction' actionstmt typingctx info context 
                     
     mkaction' actionstmt typingctx info context = do
-      thisaty    <- mkAnnoType (TypeName n)
-      retaty     <- mkAnnoType retty
-      aargdecls  <- mapM mkAnnoArgType argdecls
-      eff        <- newEffVar
-      let aargtys = snd $ unzip $ aargdecls
+      Just thisaty <- getVartyping n context Nothing "this" numThis
+      Just retaty  <- getVartyping n context (Just (m,id)) "return" numReturn
+      maybeaargtys <- getArgVartyping n context m id argdecls
+      eff          <- newEffVar
+      let aargtys = map fromJust maybeaargtys
+      let aargdecls = [ (x,aty) | ((_, x, id),aty) <- zip argdecls aargtys ] 
           
       _ <-
         if elem "static" attrs == False 
@@ -636,13 +649,13 @@ mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
       | otherwise = mkaction' actionstmt typingctx info context
                     
     mkaction' actionstmt typingctx info context = do
-      thisaty   <- mkAnnoType (TypeName n)
-      retaty    <- mkAnnoType (TypeName n)
-      aargdecls <- mapM mkAnnoArgType argdecls
+      Just thisaty <- getVartyping n context Nothing "this" numThis
+      Just retaty  <- getVartyping n context (Just (m,id)) "return" numReturn
+      maybeaargtys <- getArgVartyping n context m id argdecls
       eff       <- newEffVar
-      let aargtys = snd $ unzip $ aargdecls
+      let aargtys = map fromJust maybeaargtys
+      let aargdecls = [ (x,aty) | ((_, x, id),aty) <- zip argdecls aargtys ]
           
-      let id = getAnno thisaty
       let typingenv = [("this", thisaty), ("return", retaty)] ++ aargdecls
           
       putTyping (M n context m id aargtys retaty eff)
@@ -665,8 +678,8 @@ mkActionMDecl (n, p, is) (FieldDecl attrs ty f id maybee) = do
       mkaction'' aty typingctx info context
       
     mkaction'' aty typingctx info context = do
-      fty    <- mkAnnoType ty
-      cty    <- mkAnnoType (TypeName n)
+      fty      <- mkAnnoType ty
+      Just cty <- getVartyping n context Nothing "this" numThis
       let cid = getAnno cty
       putTyping (F n context f id fty)
       putConstraint (C_upper cid (Set [context]))

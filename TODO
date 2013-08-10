@@ -37,6 +37,13 @@
   - [Analysis] default constructor can be automatically added if necessary.
   - [SyntaxAnalysis] Add a default constructor if there is no constructr in a given class. (DONE, but disabled)
 
+2. Analysis
+  - TypingEnv -> [(VarName, UniqueId, AnnoType)]
+  - mkAnnoType ===> getVartyping ...
+  - invoke ===> parameter passing and return
+  - constraint solving
+  - repeat until no change
+
 
 1. Android Game 논문 예제 OK
 2. TOSEM 논문 예제 OK
