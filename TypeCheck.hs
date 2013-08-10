@@ -79,8 +79,11 @@ prMtypes mtypes =
 prVtypes vtypes =     
   do putStrLn "Variable Types:"
      mapM_ putStrLn 
-       $ map (\(c, m, id, x, xid, ty) ->
-               " - " ++ c ++ "," ++ m ++ "," ++ show id ++ ","
+       $ map (\(c, maybemid, x, xid, ty) ->
+               " - " ++ c ++ "," 
+               ++ (case maybemid of 
+                      Just (m,id) -> m ++ "," ++ show id ++ ","
+                      Nothing -> "")
                ++ x ++ "," ++ show xid ++ " : " ++ show ty) vtypes
      putStrLn ""
 
@@ -172,13 +175,15 @@ mkMtype'' cs ucs c = mtypes
              | (c', m, id, argtys, retty, attrs, args, maybestmt) <- basicMtypes
              , c == c' ]
              
-mkVtype :: Program -> [[(ClassName, MethodName, UniqueId, VarName, UniqueId, TypeName)]]
-mkVtype cs = concat $ 
-  [ map (f c) res | Class attrs c maybep is mdecls <- cs
-                  , mdecl <- mdecls
-                  , let res = mkVtypeMdecl mdecl ]
+mkVtype :: Program -> [[(ClassName, Maybe (MethodName, UniqueId), VarName, UniqueId, TypeName)]]
+mkVtype cs =  concat $ 
+  [ fthis c : 
+    concat [ map (f c) res | mdecl <- mdecls, let res = mkVtypeMdecl mdecl ]
+  | Class attrs c maybep is mdecls <- cs ]
   where
-    f c (m, id, tyxxids) = [ (c,m,id,x,xid,ty) | (ty,x,xid) <- tyxxids ]
+    f c (m, id, tyxxids) = [ (c,Just (m,id),x,xid,ty) | (ty,x,xid) <- tyxxids ]
+    
+    fthis c = [ (c, Nothing, "this", numThis, TypeName c) ]
 
 mkVtypeMdecl (MethodDecl attrs retty m id argdecls stmt) = 
   [(m, id, mkVtypeStmt stmt)] ++ mkVtypeArgDecls m id argdecls
@@ -311,7 +316,7 @@ lookupMtype info (ArrayTypeName c) m argtys =
 lookupMtype' info c m argtys =
   if isUserClass c (getUserClasses info) || 
      isUserInterface c (getUserClasses info)
-     then lookupMtype'' info c m argtys (getMtype info) (getInheritance info)
+     then lookupMtype'' info c m argtys (getMtypes info) (getInheritance info)
      else lookupMtype'' info c m argtys basicMtypes basicInheritance
 
 lookupMtype'' info c m argtys mtypes inheritance =
@@ -362,7 +367,7 @@ lookupKtype info (TypeName c) argtys =
 lookupKtype' info c m argtys =
   if isUserClass c (getUserClasses info) || 
      isUserInterface c (getUserClasses info)
-     then lookupKtype'' info c m argtys (getMtype info) (getInheritance info)
+     then lookupKtype'' info c m argtys (getMtypes info) (getInheritance info)
      else lookupKtype'' info c m argtys basicMtypes basicInheritance
 
 lookupKtype'' info c m argtys mtypes inheritance =

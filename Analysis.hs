@@ -17,7 +17,7 @@ doAnalysis program info = do
   let alloctable  = [] :: AllocLabelTable
   let uniqueid    = initialuniqueid  :: UniqueId    
   let state       = (worklist, constraints, typingtable, alloctable, uniqueid)
-  actionlookuptable <- mkActionProgram program
+  actionlookuptable <- mkActionProgram info program
   prActionLookupTable info [1] actionlookuptable state
   -- (_, state1) <- runStateT (doWork info actionlookuptable) state
   -- let (worklist1, constraints1, typingtable1, uniqueid1) = state1
@@ -131,7 +131,7 @@ data TableEntry =
   | M ClassName Context MethodName UniqueId [AnnoType] AnnoType Effect
     
     -- V(C,ctx,m,k,x,j) = Xi
-  | V ClassName Context MethodName UniqueId VarName UniqueId AnnoType
+  | V ClassName Context (Maybe (MethodName, UniqueId)) VarName UniqueId AnnoType
     
 emptyTypingTable = []    
 unionTypingTable t1 t2 = t1 ++ t2
@@ -150,11 +150,13 @@ prTypingTable typingtable = do
         " - " ++ c ++ "{" ++ showContext context ++ "}" 
         ++ "." ++ m ++ "," ++ show id
         ++ " = " ++ showMethodtype atys aty eff )
-    pr (V c context m id v vid aty) =
+    pr (V c context maybemid v vid aty) =
       putStrLn (
         " - " ++ c ++ "{" ++ showContext context ++ "}" 
-        ++ "." ++ m ++ "," ++ show id
-        ++ "/" ++ v ++ "," ++ show vid
+        ++ (case maybemid of 
+               Just (m,id) -> "." ++ m ++ "," ++ show id
+               Nothing     -> "")
+        ++ "," ++ v ++ "," ++ show vid
         ++ " = " ++ show aty )
 
 -- Effects
@@ -336,18 +338,17 @@ getMethodtyping c ctx m id = do
         ++ show (c,ctx,m,id)
       return Nothing
 
-getVartyping :: ClassName -> Context -> MethodName -> UniqueId -> VarName -> UniqueId 
-                   -> StateT AnalysisState IO (Maybe AnnoType)
-getVartyping c ctx m id v vid = do
+getVartyping :: ClassName -> Context -> Maybe (MethodName,UniqueId) -> VarName -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
+getVartyping c ctx maybemid v vid = do
   (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  retMaybeAnnovtype $ lookupVarTyping typingtable c ctx m id v vid
+  retMaybeAnnovtype $ lookupVarTyping typingtable c ctx maybemid v vid
   
   where
     retMaybeAnnovtype []  = return Nothing
     retMaybeAnnovtype [h] = return $ Just h
     retMaybeAnnovtype _   = do 
       liftIO $ putStrLn $ "getVartyping: duplicate variable typings for "
-        ++ show (c,ctx,m,id,v,vid)
+        ++ show (c,ctx,maybemid,v,vid)
       return Nothing
                                
 putAllocTableEntry :: AllocLabelLocation -> ClassName -> StateT AnalysisState IO Label
@@ -413,11 +414,10 @@ lookupMethodTyping typingtable c ctx m id =
   | M ci ctxi mi idi atysi atyi eff <- typingtable
   , c==ci && ctx==ctxi && m==mi && idi==id ]
 
-lookupVarTyping :: TypingTable -> ClassName -> Context -> MethodName -> UniqueId -> VarName 
-                   -> UniqueId -> [AnnoType]
-lookupVarTyping typingtable c ctx m id v vid = 
-  [ atyi | V ci ctxi mi idi vi vidi atyi <- typingtable, 
-    c==ci && ctx==ctxi && m==mi && idi==id && vi==v && vidi==vid ]
+lookupVarTyping :: TypingTable -> ClassName -> Context -> Maybe (MethodName,UniqueId) -> VarName -> UniqueId -> [AnnoType]
+lookupVarTyping typingtable c ctx maybemid v vid = 
+  [ atyi | V ci ctxi maybemidi vi vidi atyi <- typingtable, 
+    c==ci && ctx==ctxi && maybemid==maybemidi && vi==v && vidi==vid ]
   
 --
 prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
@@ -519,15 +519,16 @@ lookupFields''' info c f inheritance =
     fs  -> Nothing -- Duplicate field
     
 --
-mkActionProgram :: Program -> IO ActionLookupTable
-mkActionProgram program = do
-  actionmethodss <- mapM mkActionClass program
+mkActionProgram :: Info -> Program -> IO ActionLookupTable
+mkActionProgram info program = do
+  actionmethodss <- mapM (mkActionClass info) program
   return $ concat $ actionmethodss
     
-mkActionClass :: Class -> IO ActionLookupTable
-mkActionClass (Class attrs n p is mdecls) = do
+mkActionClass :: Info -> Class -> IO ActionLookupTable
+mkActionClass info (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
-  return $ wrapFieldInit $ concat $ actionmethodss
+  actionvars     <- mkActionVar (n, p, is) (getVtypes info)
+  return $ actionvars ++ (wrapFieldInit $ concat $ actionmethodss)
   where
     wrapFieldInit :: ActionLookupTable -> ActionLookupTable
     wrapFieldInit actionmethods = 
@@ -547,25 +548,34 @@ mkActionClass (Class attrs n p is mdecls) = do
       foldr f (return ()) fieldActions
       a info context
       
-mkActionClass (Interface n is mdecls) = do
+mkActionClass info (Interface n is mdecls) = do
   return []
   
 memorizedActionEntry :: ActionLookupTableEntry -> ActionLookupTableEntry 
-memorizedActionEntry ((FieldActionId c f id), a) = 
+memorizedActionEntry (FieldActionId c f id, a) = 
   let check action info context = do
         maybeaty <- getFieldtyping c context f id
         case maybeaty of
           Nothing -> action info context
           Just _  -> return () 
-  in  ((FieldActionId c f id), check a)
+  in  (FieldActionId c f id, check a)
     
-memorizedActionEntry ((MethodActionId c m id), a) = 
+memorizedActionEntry (MethodActionId c m id, a) = 
   let check action info context = do
         maybemty <- getMethodtyping c context m id
         case maybemty of
           Nothing -> action info context
           Just _  -> return ()
-  in ((MethodActionId c m id), check a)
+  in (MethodActionId c m id, check a)
+     
+memorizedActionEntry (VarActionId c maybemid v vid, a) = 
+  let check action info context = do
+        maybemty <- getVartyping c context maybemid v vid
+        case maybemty of
+          Nothing -> action info context
+          Just _  -> return ()
+  in (VarActionId c maybemid v vid, check a)
+     
     
 mkActionMDecl :: ClassInfo -> MemberDecl -> IO ActionLookupTable
 mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
@@ -651,6 +661,21 @@ mkActionMDecl (n, p, is) (FieldDecl attrs ty f id maybee) = do
 mkActionMDecl (n, p, is) (AbstractMethodDecl retty m id argdecls) = do
   return []
       
+
+makeVarsReady :: ClassName -> MethodName -> UniqueId -> StateT AnalysisState IO ()
+makeVarsReady n m id = do
+  -- TODO: HERE HERE HERE!!!
+  return ()
+
+mkActionVar :: ClassInfo -> Vtypes -> IO ActionLookupTable
+mkActionVar (n, p, is) vtypes = 
+  mapM mkactionentry vtypes
+  where
+    mkactionentry (c,maybemid,x,xid,ty) = do
+      let mkaction info context = do
+            aty <- mkAnnoType ty
+            putTyping (V c context maybemid x xid aty)
+      return (VarActionId c maybemid x xid, mkaction)
   
 mkActionStmt :: Stmt -> IO ActionStmt
 mkActionStmt (Expr expr) = do
