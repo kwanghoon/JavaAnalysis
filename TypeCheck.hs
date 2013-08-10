@@ -30,7 +30,7 @@ returnResult info (Right program) = do
   return $ Just (info, program)
 
 -- 0. Print type information
-prTyInfo (userClasses, inheritance, fields, mtypes) =
+prTyInfo (userClasses, inheritance, fields, mtypes, vtypes) =
   do prUserClasses userClasses
      prUserClasses basicClasses
      prInheritance inheritance
@@ -39,6 +39,7 @@ prTyInfo (userClasses, inheritance, fields, mtypes) =
      prFields basicFields
      prMtypes mtypes
      prMtypes basicMtypes
+     prVtypes vtypes
 
 prUserClasses userClasses = 
   do putStrLn "Classes: "
@@ -74,10 +75,18 @@ prMtypes mtypes =
                 (intersperse ", " $ map show $ targs) ++ [")"]) ++
                " --> " ++ show tret) mtypes
      putStrLn ""
+     
+prVtypes vtypes =     
+  do putStrLn "Variable Types:"
+     mapM_ putStrLn 
+       $ map (\(c, m, id, x, xid, ty) ->
+               " - " ++ c ++ "," ++ m ++ "," ++ show id ++ ","
+               ++ x ++ "," ++ show xid ++ " : " ++ show ty) vtypes
+     putStrLn ""
 
 -- 1. Gather type information
 initTypeCheck :: Program -> Info
-initTypeCheck cs = (userClasses, inheritance, fields, mtypes)
+initTypeCheck cs = (userClasses, inheritance, fields, mtypes, vtypes)
   where
     userClasses = map fclass cs 
     fclass (Class attrs c _ _ _) = (c, [java_class])
@@ -94,7 +103,7 @@ initTypeCheck cs = (userClasses, inheritance, fields, mtypes)
     
     fields = [ (c, mkFields cs userClasses c) | (c, _) <- userClasses]
     mtypes = concat [ mkMtype cs userClasses c | (c, _) <- userClasses]
-
+    vtypes = concat (mkVtype cs)
 
 getClassDef cs c = 
   let fname (Class _ d _ _ _) = d
@@ -162,6 +171,38 @@ mkMtype'' cs ucs c = mtypes
     mtypes = [ (c, m, id, argtys, retty, attrs, args, maybestmt) 
              | (c', m, id, argtys, retty, attrs, args, maybestmt) <- basicMtypes
              , c == c' ]
+             
+mkVtype :: Program -> [[(ClassName, MethodName, UniqueId, VarName, UniqueId, TypeName)]]
+mkVtype cs = concat $ 
+  [ map (f c) res | Class attrs c maybep is mdecls <- cs
+                  , mdecl <- mdecls
+                  , let res = mkVtypeMdecl mdecl ]
+  where
+    f c (m, id, tyxxids) = [ (c,m,id,x,xid,ty) | (ty,x,xid) <- tyxxids ]
+
+mkVtypeMdecl (MethodDecl attrs retty m id argdecls stmt) = 
+  [(m, id, mkVtypeStmt stmt)] ++ mkVtypeArgDecls m id argdecls
+mkVtypeMdecl (ConstrDecl c id argdecls stmt) = 
+  [(c, id, mkVtypeStmt stmt)] ++ mkVtypeArgDecls c id argdecls
+mkVtypeMdecl _ = []
+
+mkVtypeArgDecls m id []       = []
+mkVtypeArgDecls m id argdecls = [(m, id, argdecls)]
+
+mkVtypeStmt (Expr e) = []
+mkVtypeStmt (Ite e stmt1 stmt2) = mkVtypeStmt stmt1 ++ mkVtypeStmt stmt2
+mkVtypeStmt (LocalVarDecl ty x id maybexp) = [(ty, x, id)]
+mkVtypeStmt (Return maybeexp) = []
+mkVtypeStmt (Seq stmt1 stmt2) = mkVtypeStmt stmt1 ++ mkVtypeStmt stmt2
+mkVtypeStmt (NoStmt) = []
+mkVtypeStmt (While e stmt) = mkVtypeStmt stmt
+mkVtypeStmt (For maybedecl x e1 e2 e3 stmt) = 
+  maybevtype maybedecl ++ mkVtypeStmt stmt
+  where
+    maybevtype Nothing         = []
+    maybevtype (Just (ty, id)) = [(ty, x, id)]
+mkVtypeStmt (Block stmt) = mkVtypeStmt stmt
+
 
 -- 2. Do typecheck
     

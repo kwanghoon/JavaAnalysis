@@ -20,15 +20,16 @@ type UserClasses = [(Name, [Attrib])]
 type Inheritance = [(Name,Name)]
 type Fields      = [(ClassName, [(TypeName, FieldName, [Attrib])])]
 type Mtypes      = [(ClassName, MethodName, UniqueId, [TypeName], TypeName, [Attrib], [VarName], Maybe Stmt)]
-type Vtypes      = [(ClassName, MethodName, UniqueId, TypeName, [Attrib], VarName, UniqueId)]
+type Vtypes      = [(ClassName, MethodName, UniqueId, VarName, UniqueId, TypeName)]
 
-type Info      = (UserClasses, Inheritance, Fields, Mtypes)
+type Info      = (UserClasses, Inheritance, Fields, Mtypes, Vtypes)
 type ClassInfo = (ClassName, Maybe ClassName, [ClassName]) -- itself, parent, interfaces
 
-getUserClasses (userClasses, inheritance, fields, mtype) = userClasses 
-getInheritance (userClasses, inheritance, fields, mtype) = inheritance
-getFields      (userClasses, inheritance, fields, mtype) = fields
-getMtype       (userClasses, inheritance, fields, mtype) = mtype
+getUserClasses (userClasses, inheritance, fields, mtype, vtype) = userClasses 
+getInheritance (userClasses, inheritance, fields, mtype, vtype) = inheritance
+getFields      (userClasses, inheritance, fields, mtype, vtype) = fields
+getMtype       (userClasses, inheritance, fields, mtype, vtype) = mtype
+getVtype       (userClasses, inheritance, fields, mtype, vtype) = vtype
 
 isUserClass c ucs =     
   not $ null $ 
