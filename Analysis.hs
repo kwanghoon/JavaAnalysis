@@ -528,24 +528,38 @@ mkActionClass :: Info -> Class -> IO ActionLookupTable
 mkActionClass info (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
   actionvars     <- mkActionVar (n, p, is) (getVtypes info)
-  return $ actionvars ++ (wrapFieldInit $ concat $ actionmethodss)
+  return $ wrapFieldInit (concat actionmethodss) actionvars
   where
-    wrapFieldInit :: ActionLookupTable -> ActionLookupTable
-    wrapFieldInit actionmethods = 
-      let memorizedactionmethods = map memorizedActionEntry actionmethods in
-      (map 
-       (wrap [ a | (FieldActionId _ _ _, a) <- memorizedactionmethods ])
+    wrapFieldInit :: ActionLookupTable -> ActionLookupTable -> ActionLookupTable
+    wrapFieldInit actionmethods actionvars = 
+      let memorizedactionmethods = map memorizedActionEntry actionmethods 
+          memorizedactionvars    = map memorizedActionEntry actionvars
+          
+          memorizedactionfields  = 
+            [ a | (FieldActionId _ _ _, a) <- memorizedactionmethods ]
+      in
+       (map (wrap memorizedactionfields memorizedactionvars) 
         memorizedactionmethods)
     
-    wrap :: [ActionMember] -> ActionLookupTableEntry -> ActionLookupTableEntry
-    wrap fieldActions ((FieldActionId c f id), a) = ((FieldActionId c f id), a)
-    wrap fieldActions ((MethodActionId c m id), a) = 
-      (MethodActionId c m id, fieldInit fieldActions a)
+    wrap :: [ActionMember] -> ActionLookupTable -> ActionLookupTableEntry 
+            -> ActionLookupTableEntry
+    wrap fieldActions varActionTable (FieldActionId c f id, a) = 
+      (FieldActionId c f id, a)
+    wrap fieldActions varActionTable (MethodActionId c m id, a) = 
+      let varActions = 
+            [ a | (VarActionId c' (Just (m',id')) _ _, a) <- varActionTable
+                , c==c', m==m', id==id' ] ++
+            [ a | (VarActionId c' Nothing "this" _, a) <- varActionTable,c==c' ]
+      in
+       (MethodActionId c m id, 
+        fieldVarInit fieldActions varActions a)
     
-    fieldInit :: [ActionMember] -> ActionMember -> ActionMember
-    fieldInit fieldActions a info context = do
+    fieldVarInit :: [ActionMember] -> [ActionMember]
+                    -> ActionMember -> ActionMember
+    fieldVarInit fieldActions varActions a info context = do
       let f a m = do a info context; m
       foldr f (return ()) fieldActions
+      foldr f (return ()) varActions
       a info context
       
 mkActionClass info (Interface n is mdecls) = do
