@@ -676,11 +676,6 @@ mkActionMDecl (n, p, is) (AbstractMethodDecl retty m id argdecls) = do
   return []
       
 
-makeVarsReady :: ClassName -> MethodName -> UniqueId -> StateT AnalysisState IO ()
-makeVarsReady n m id = do
-  -- TODO: HERE HERE HERE!!!
-  return ()
-
 mkActionVar :: ClassInfo -> Vtypes -> IO ActionLookupTable
 mkActionVar (n, p, is) vtypes = 
   mapM mkactionentry vtypes

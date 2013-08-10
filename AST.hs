@@ -281,7 +281,8 @@ numClass (Class attrs n pn ins mdecls) =
 numClass (Interface n ins mdecls) =  
   Interface n ins (numMdecls mdecls)
   
-numThis = 0
+numThis   = 0
+numReturn = 1
 
 numMdecls mdecls = 
   [ numMdecl mdecl id | (mdecl,id) <- zip mdecls [1..] ]
@@ -290,12 +291,12 @@ numMdecls mdecls =
 numMdecl (MethodDecl attrs retty n _ argdecls stmt) id = 
   MethodDecl attrs retty n id argdecls' stmt'
   where
-    (argdecls', n') = numArgDecls argdecls (numThis+1)
+    (argdecls', n') = numArgDecls argdecls (numReturn+1)
     (stmt', _, _)      = numStmt stmt n' 1
 numMdecl (ConstrDecl n _ argdecls stmt) id =
   ConstrDecl n id argdecls' stmt'
   where
-    (argdecls', n') = numArgDecls argdecls (numThis+1)
+    (argdecls', n') = numArgDecls argdecls (numReturn+1)
     (stmt', _, _)      = numStmt stmt n' 1
 numMdecl (FieldDecl attrs ty n _ maybee) id =
   FieldDecl attrs ty n id maybee'

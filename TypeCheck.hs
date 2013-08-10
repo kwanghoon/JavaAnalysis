@@ -177,7 +177,7 @@ mkMtype'' cs ucs c = mtypes
              
 mkVtype :: Program -> [[(ClassName, Maybe (MethodName, UniqueId), VarName, UniqueId, TypeName)]]
 mkVtype cs =  concat $ 
-  [ fthis c : 
+  [ fthis c :
     concat [ map (f c) res | mdecl <- mdecls, let res = mkVtypeMdecl mdecl ]
   | Class attrs c maybep is mdecls <- cs ]
   where
@@ -186,9 +186,11 @@ mkVtype cs =  concat $
     fthis c = [ (c, Nothing, "this", numThis, TypeName c) ]
 
 mkVtypeMdecl (MethodDecl attrs retty m id argdecls stmt) = 
-  [(m, id, mkVtypeStmt stmt)] ++ mkVtypeArgDecls m id argdecls
+  [(m, id, mkVtypeStmt stmt)] ++ mkVtypeArgDecls m id argdecls ++
+  [(m, id, [(retty, "return", numReturn)])]
 mkVtypeMdecl (ConstrDecl c id argdecls stmt) = 
-  [(c, id, mkVtypeStmt stmt)] ++ mkVtypeArgDecls c id argdecls
+  [(c, id, mkVtypeStmt stmt)] ++ mkVtypeArgDecls c id argdecls ++
+  [(c, id, [(TypeName c, "return", numReturn)])]
 mkVtypeMdecl _ = []
 
 mkVtypeArgDecls m id []       = []
