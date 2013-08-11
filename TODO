@@ -34,8 +34,10 @@
   - [TypeCheck] No use of this in static methods. (DONE)
   - [Analysis] No constraint generation for the annotated type of this in static methods. (DONE)
   - [TypeCheck] A same method declaration can occur in the multiple interfaces.
-  - [Analysis] default constructor can be automatically added if necessary.
-  - [SyntaxAnalysis] Add a default constructor if there is no constructr in a given class. (DONE, but disabled)
+  - [Analysis] default constructor can be automatically added if necessary. (DONE)
+  - [SyntaxAnalysis] Add a default constructor if there is no constructr in a given class. (DONE)
+  - [Analysis] a bug in handling arrays
+  - [Analysis] Suppress unnecessary generation of constraints for a class in case a given context does not match with the class
 
 2. Analysis
   - TypingEnv -> [(VarName, UniqueId, AnnoType)]

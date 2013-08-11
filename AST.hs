@@ -38,6 +38,14 @@ isUserClass c ucs =
 isUserInterface c ucs =     
   not $ null $ 
   [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_interface attribs ]
+  
+isInstanceMethod info c Nothing = False
+isInstanceMethod info c (Just (m,id)) = 
+  let mtypes = getMtypes info 
+  in  and
+      [ elem "static" attrs == False
+      | (c',m',id', _, _, attrs, _, _) <- mtypes
+      , c==c' && m==m' && id==id' ]
 
 --
 type Name     = String
@@ -276,7 +284,7 @@ numClass (Class attrs n pn ins mdecls) =
   where
     defaultConstr = 
       case [ length argdecls | (ConstrDecl _ _ argdecls _) <- mdecls ] of
-        [] -> [] -- [ConstrDecl n 0 [] NoStmt]
+        [] -> [ConstrDecl n 0 [] NoStmt]
         _  -> []
 numClass (Interface n ins mdecls) =  
   Interface n ins (numMdecls mdecls)
