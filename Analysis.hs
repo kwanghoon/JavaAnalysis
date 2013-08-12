@@ -15,8 +15,10 @@ doAnalysis program info = do
   let typingtable = [] :: TypingTable
   let constraints = [] :: Constraints
   let alloctable  = [] :: AllocLabelTable
+  let allocobjs   = [] :: AllocObjs
   let uniqueid    = initialuniqueid  :: UniqueId    
-  let state       = (worklist, constraints, typingtable, alloctable, uniqueid)
+  let state       = 
+        (worklist, constraints, typingtable, alloctable, allocobjs, uniqueid)
   actionlookuptable <- mkActionProgram info program
   prActionLookupTable info [] actionlookuptable state
   -- (_, state1) <- runStateT (doWork info actionlookuptable) state
@@ -292,6 +294,9 @@ domain tyenv = [ x | (x,ty) <- tyenv ]
 restrict :: TypingEnv -> [Name] -> TypingEnv
 restrict tyenv dom = [ (x,ty) | (x,ty) <- tyenv, x `elem` dom ]
 
+getClassFromTypingCtx (c,_,_,_) = c
+getMethodFromTypingCtx (_,_,_,maybemid) = maybemid
+
 -- WorkList
 type WorkList = [(ClassName,Context,MethodName,UniqueId)]
 
@@ -301,17 +306,20 @@ isWorklistEmpty _  = False
 nextFromWorklist l = (head l, tail l)
 
 -- A Table for Unique Allocation Labels
-type AllocLabelTable = [(Context, AllocLabelLocation, ClassName)]
-type AllocLabelLocation = (ClassName, Context, MethodName, UniqueId, Label)
+type AllocLabelTable = [(UniqueId, AllocLabelLocation, ClassName)]
+-- type AllocLabelLocation = (ClassName, Context, MethodName, UniqueId, Label)
+type AllocLabelLocation = (ClassName, MethodName, UniqueId, Label)
+
+type AllocObjs = [Context]
 
 --
 type AnalysisState = -- Can be extended if necessary
-  (WorkList, Constraints, TypingTable, AllocLabelTable, UniqueId)
+  (WorkList, Constraints, TypingTable, AllocLabelTable, AllocObjs, UniqueId)
 
 newId :: StateT AnalysisState IO UniqueId
 newId = do
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  put (worklist,constraints,typingtable,alloctable,uniqueid+1)
+  (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid+1)
   return uniqueid
   
 newIds :: [a] -> StateT AnalysisState IO [UniqueId]
@@ -321,38 +329,38 @@ newIds ls = mapM f ls
     
 newEffVar :: StateT AnalysisState IO Effect
 newEffVar = do
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  put (worklist,constraints,typingtable,alloctable,uniqueid+1)
+  (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid+1)
   return (EffVar uniqueid)
 
 getWorklist :: StateT AnalysisState IO WorkList
 getWorklist = do
-  (worklist,_,_,_,_) <- get
+  (worklist,_,_,_,_,_) <- get
   return worklist
   
 putWorklist :: WorkList -> StateT AnalysisState IO ()
 putWorklist worklist = do
-  (_,constraints,typingtable,alloctable,uniqueid) <- get
-  put (worklist,constraints,typingtable,alloctable,uniqueid)
+  (_,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid)
   
 getConstraints :: StateT AnalysisState IO Constraints
 getConstraints = do
-  (_,constraints,_,_,_) <- get
+  (_,constraints,_,_,_,_) <- get
   return constraints
   
 resetConstraints :: Constraints -> StateT AnalysisState IO ()
 resetConstraints constraints = do
-  (worklist,_,typingtable,alloctable,uniqueid) <- get
-  put (worklist,constraints,typingtable,alloctable,uniqueid)
+  (worklist,_,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid)
 
 putConstraint :: Constraint -> StateT AnalysisState IO ()
 putConstraint constraint = do
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  put (worklist,constraint:constraints,typingtable,alloctable,uniqueid)
+  (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (worklist,constraint:constraints,typingtable,alloctable,allocobjs,uniqueid)
   
 resolveConstraint ::  Constraint -> StateT AnalysisState IO [Constraint]
 resolveConstraint (C_assignfield aty1 aty2 f) = do
-  (_,constraints,typingtable,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let cid  = getAnno aty2
   let cenv = solve constraints
   let Set ctxs = lookupCEnv cenv cid
@@ -370,7 +378,7 @@ resolveConstraint (C_assignfield aty1 aty2 f) = do
   return $ [ C_assignfield aty1 aty2 f ] ++ [ C_assign aty1 aty | aty <- atys ]
   
 resolveConstraint (C_field aty1 f aty2) = do
-  (_,constraints,typingtable,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let cid  = getAnno aty1
   let cenv = solve constraints
   let Set ctxs = lookupCEnv cenv cid
@@ -388,7 +396,7 @@ resolveConstraint (C_field aty1 f aty2) = do
   return $ [ C_field aty1 f aty2 ] ++ [ C_assign aty aty2 | aty <- atys ]
   
 resolveConstraint (C_invoke cty m atys eff aty) = do
-  (_,constraints,typingtable,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let cid = getAnno cty
   let cenv = solve constraints
   let Set ctxs = lookupCEnv cenv cid
@@ -407,17 +415,17 @@ resolveConstraint (C_invoke cty m atys eff aty) = do
   
 getTyping :: StateT AnalysisState IO TypingTable
 getTyping = do
-  (_,_,typing,_,_) <- get
+  (_,_,typing,_,_,_) <- get
   return typing
   
 putTyping :: TableEntry -> StateT AnalysisState IO ()
 putTyping typing = do
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  put (worklist,constraints,typing:typingtable,alloctable,uniqueid)
+  (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (worklist,constraints,typing:typingtable,alloctable,allocobjs,uniqueid)
                               
 getFieldtyping :: ClassName -> Context -> FieldName -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
 getFieldtyping c ctx f id = do
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
+  (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
   retMaybeAnnotype $ lookupFieldTyping typingtable c ctx f id
   
   where
@@ -432,7 +440,7 @@ getFieldtyping c ctx f id = do
 getMethodtyping :: ClassName -> Context -> MethodName -> UniqueId 
                    -> StateT AnalysisState IO (Maybe AnnoMethodType)
 getMethodtyping c ctx m id = do
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
+  (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
   retMaybeAnnomtype $ lookupMethodTyping typingtable c ctx m id
   
   where
@@ -446,7 +454,7 @@ getMethodtyping c ctx m id = do
 getVartyping :: ClassName -> Context -> Maybe (MethodName,UniqueId) -> VarName 
                 -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
 getVartyping c ctx maybemid v vid = do
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
+  (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
   retMaybeAnnovtype $ lookupVarTyping typingtable c ctx maybemid v vid
   
   where
@@ -462,35 +470,77 @@ getArgVartyping c ctx m id argdecls = do
   where
     g (ty,argv,argid) = getVartyping c ctx (Just (m,id)) argv argid
                                
-lookupAllocTableEntry :: (ClassName, Context, MethodName, UniqueId, Label) -> StateT AnalysisState IO (Maybe ClassName)
+lookupAllocTableEntry :: AllocLabelLocation -> StateT AnalysisState IO (Maybe ClassName)
 lookupAllocTableEntry  entry = do
-  (_,_,_,alloctable,_) <- get
+  (_,_,_,alloctable,_,_) <- get
   case [ newc' | (id',entry',newc') <- alloctable, entry==entry' ] of
     []    -> return $ Nothing
     (h:_) -> return $ Just h
 
-putAllocTableEntry :: AllocLabelLocation -> ClassName -> StateT AnalysisState IO Label
-putAllocTableEntry entry@(cname,context,m,mid,label) newc = do
-  id <- newId
-  (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  let newContext = addContext length_k context id
-  put (worklist,constraints,typingtable,(newContext,entry,newc):alloctable,uniqueid)
-  return id
+putAllocTableEntry :: Context -> AllocLabelLocation -> ClassName -> StateT AnalysisState IO Context
+putAllocTableEntry context entry@(cname,m,mid,label) newc = do
+  alloctable <- registerAllocTableEntry entry newc
+  let f allocsiteid = 
+        head [ entry | (allocsiteid', entry, newc) <- alloctable
+                      , allocsiteid==allocsiteid' ]
+  let entrys = map f context
+  let newentrys = take length_k $ entrys ++ [entry]
+  let g entry = 
+        head [ allocsiteid | (allocsiteid,entry',newc) <- alloctable
+                           , entry==entry' ]
+  let newContext = map g newentrys
+  putAllocLabelTable alloctable
+  putAllocObj newContext
+  return newContext
+  
+registerAllocTableEntry entry newc = do  
+  alloctable <- getAllocLabelTable
+  case [ (id,entry',newc) 
+       | (id,entry',newc) <- alloctable, entry==entry' ] of
+    (h:t) -> return alloctable
+    []    -> do id <- newId
+                return ((id,entry,newc):alloctable)
+  
+duplicateCheck (h:_) context entry newc alloctable = return (h, alloctable)
   
 getAllocLabelTable :: StateT AnalysisState IO AllocLabelTable
 getAllocLabelTable = do
-  (_,_,_,alloctable,_) <- get
+  (_,_,_,alloctable,_,_) <- get
   return alloctable
+  
+putAllocLabelTable :: AllocLabelTable -> StateT AnalysisState IO ()  
+putAllocLabelTable alloctable = do
+  (worklist,constraints,typingtable,_,allocobjs,uniqueid) <- get
+  put (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid)
 
 prAllocLabelTable :: AllocLabelTable -> IO ()  
 prAllocLabelTable alloctable = do
   putStrLn "Alloc Labels"
   mapM_ pr $ reverse $ alloctable
   where
-    pr (id, (c,ctx,m,mid,label), newc) = 
+    pr (id, (c,m,mid,label), newc) = 
       putStrLn $ " - " ++ obj_alloc_site_prefix ++ show id ++ " : " ++ 
-      "(" ++ c ++","++ showContext ctx ++ "," ++ m ++ "," ++ show mid ++ "," ++ show label ++ ")" ++
+      "(" ++ c ++","++ m ++ "," ++ show mid ++ "," ++ show label ++ ")" ++
       " " ++ "new" ++ " " ++ newc
+      
+getAllocObjs :: StateT AnalysisState IO AllocObjs
+getAllocObjs = do
+  (_,_,_,_,allocobjs,_) <- get
+  return allocobjs
+
+putAllocObj :: Context -> StateT AnalysisState IO ()
+putAllocObj allocobj = do
+  (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  let allocobjs' = if allocobj `elem` allocobjs then allocobjs
+                   else allocobj:allocobjs
+  put (worklist,constraints,typingtable,alloctable,allocobjs',uniqueid)
+
+prAllocObjs :: AllocObjs -> IO ()
+prAllocObjs allocobjs = do
+  putStrLn "Allocated Objects"
+  mapM_ pr $ reverse $ allocobjs
+  where
+    pr context = putStrLn $ " - " ++ showContext context
 
 -- 
 type ActionMember = 
@@ -547,33 +597,38 @@ lookupVarTyping typingtable c ctx maybemid v vid =
 prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
 prActionLookupTable info context actionlookuptable initstate = do
   putStrLn $ "Action lookup table for " ++ showContext context
-  -- (_,state) <- runStateT (repRun info context actionlookuptable) initstate -- TODO: here!!!
-  (_,state) <- runStateT (runAll info context actionlookuptable) initstate
-  let (_,_,typingtable,alloctable,_) = state
+  (_,state) <- runStateT (repRun info context actionlookuptable) initstate
+  -- (_,state) <- runStateT (runAll info context actionlookuptable) initstate
+  let (_,_,typingtable,alloctable,allocobjs,_) = state
   prTypingTable typingtable
   prAllocLabelTable alloctable
+  prAllocObjs allocobjs
 
 repRun :: Info -> Context -> ActionLookupTable -> StateT AnalysisState IO ()
 repRun info context actionlookuptable = do
   runAll info context actionlookuptable
-  alloctable1 <- getAllocLabelTable
-  liftIO $ prAllocLabelTable alloctable1
+  alloctable <- getAllocLabelTable
+  allocobjs   <- getAllocObjs
+  -- liftIO $ prAllocLabelTable alloctable
+  -- liftIO $ prAllocObjs allocobjs
   repRun' 1 info actionlookuptable
 
 repRun' :: Int -> Info -> ActionLookupTable -> StateT AnalysisState IO ()
 repRun' n info actionlookuptable = do
-  liftIO $ putStrLn $ "repRun: " ++ show n
-  alloctable1 <- getAllocLabelTable
-  runAllContext alloctable1
-  alloctable2 <- getAllocLabelTable
-  liftIO $ prAllocLabelTable alloctable2
-  if length alloctable1 == length alloctable2 then return ()
+  -- liftIO $ putStrLn $ "repRun: " ++ show n
+  allocobjs1 <- getAllocObjs
+  runAllContext allocobjs1
+  alloctable <- getAllocLabelTable
+  allocobjs2 <- getAllocObjs
+  -- liftIO $ prAllocLabelTable alloctable
+  -- liftIO $ prAllocObjs allocobjs2
+  if length allocobjs1 == length allocobjs2 then return ()
     else repRun' (n+1) info actionlookuptable
          
   where
     runAllContext = foldr f (return ())
-    f (ctx,_,_) m = do runAll info ctx actionlookuptable
-                       m
+    f ctx m = do runAll info ctx actionlookuptable
+                 m
     
 runAll :: Info -> Context -> ActionLookupTable -> StateT AnalysisState IO ()
 runAll info context actionlookuptable = 
@@ -920,7 +975,11 @@ mkActionStmt (LocalVarDecl ty x id maybeexpr) = do
     mkaction :: TypeName -> VarName -> UniqueId -> Maybe ActionExpr -> ActionStmt
     mkaction ty x id maybeactionexpr typingenv typingctx info context = do
       (atye,effe) <- doit maybeactionexpr typingenv typingctx info context
-      aty <- mkAnnoType ty
+      let c = getClassFromTypingCtx typingctx
+      let maybemid = getMethodFromTypingCtx typingctx
+      maybeaty <- getVartyping c context maybemid x id
+      let aty = fromJust maybeaty
+      -- aty <- mkAnnoType ty
       putConstraint (C_assign atye aty)
       let tyenv = addTyEnv (x,aty) typingenv
       return (tyenv, effe)
@@ -997,7 +1056,11 @@ mkActionStmt (For maybedecl x e1 e2 e3 stmt) = do
     mkmaybedeclaction (Nothing) x typingenv typingctx info context = 
       return typingenv
     mkmaybedeclaction (Just (ty, id)) x typingenv typingctx info context = do
-      aty <- mkAnnoType ty
+      let c = getClassFromTypingCtx typingctx
+      let maybemid = getMethodFromTypingCtx typingctx
+      maybeaty <- getVartyping c context maybemid x id
+      let aty = fromJust maybeaty
+      -- aty <- mkAnnoType ty
       let typingenv' = addTyEnv (x,aty) typingenv
       return typingenv'
       
@@ -1071,8 +1134,8 @@ mkActionExpr (New c es label) = do
               (cname,_,_,Just (m,id)) -> (cname, m, id)
               -- (cname,_,_,Nothing)     -> (cname, "*", 100)
       let (TypeName newc) = c    -- TODO: Fix it since c can be an array type! 
-      uniqueLabel <- putAllocTableEntry (cname, context, m, id, label) newc
-      putConstraint (C_lower (Set [addContext length_k context uniqueLabel]) cid)
+      uniqueContext <- putAllocTableEntry context (cname, m, id, label) newc
+      putConstraint (C_lower (Set [uniqueContext]) cid)
       addInvokeConstraint c cid cty atys effVar
       return (cty, eff)
       
@@ -1117,9 +1180,10 @@ mkActionExpr (Assign (StaticField c f maybety) e2) = do
       (aty2,eff2) <- actionexp2 typingenv typingctx info context
       cty <- mkAnnoType c
       let cid = getAnno cty
-      putConstraint (C_assignfield aty2 cty f)
 --      putConstraint (C_upper cid (Set [staticContext]))
       putConstraint (C_lower (Set [staticContext]) cid)
+      resolvedConstraints <- resolveConstraint (C_assignfield aty2 cty f)
+      mapM_ putConstraint resolvedConstraints
       avoidty <- mkVoidType 
       return (avoidty, eff2)
 
