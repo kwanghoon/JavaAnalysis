@@ -124,7 +124,8 @@ mkVoidType = do
   putConstraint (C_lower (Set []) id)
   return aty
   
-showMethodtype atys aty eff = concat $
+showMethodtype :: [AnnoType] -> Effect -> AnnoType -> String
+showMethodtype atys eff aty = concat $
   ["("] ++ comma (map show atys) ++ [ ")", "--", show eff, "-->", show aty]
 
 -- Effects
@@ -182,7 +183,7 @@ instance Show Constraint where
   showsPrec p (C_assignfield aty1 aty2 f) = 
     conc [ show aty1, " ", "<:", " ", show aty2, ".", f ]
   showsPrec p (C_invoke aty1 m atys2 eff aty2) = 
-    conc [ show aty1, ".", m, " ", "<:", " ", showMethodtype atys2 aty2 eff ]
+    conc [ show aty1, ".", m, " ", "<:", " ", showMethodtype atys2 eff aty2 ]
   showsPrec p (C_effect eff id) = 
     conc [ show eff, " ", "<=", " ", show (EffVar id) ]
   showsPrec p (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) =
@@ -251,7 +252,7 @@ instance Show TableEntry where
     conc [ " - ", c, "{", showContext context, "}", ".", f, ",", show id, " = ", show aty ]
   showsPrec p (M c context m id atys aty eff) = 
     conc [ " - ", c, "{", showContext context, "}"
-         , ".", m, ",", show id, " = ", showMethodtype atys aty eff ]
+         , ".", m, ",", show id, " = ", showMethodtype atys eff aty ]
   showsPrec p (V c context maybemid v vid aty) =
     conc [ " - ", c, "{", showContext context, "}" ] .
     showMaybemid maybemid . conc [ ",", v, ",", show vid, " = ", show aty ]
@@ -484,7 +485,7 @@ putAllocTableEntry context entry@(cname,m,mid,label) newc = do
         head [ entry | (allocsiteid', entry, newc) <- alloctable
                       , allocsiteid==allocsiteid' ]
   let entrys = map f context
-  let newentrys = take length_k $ entrys ++ [entry]
+  let newentrys = reverse $ take length_k $ reverse $ entrys ++ [entry]
   let g entry = 
         head [ allocsiteid | (allocsiteid,entry',newc) <- alloctable
                            , entry==entry' ]
