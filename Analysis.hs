@@ -596,7 +596,7 @@ lookupVarTyping typingtable c ctx maybemid v vid =
 --
 prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
 prActionLookupTable info context actionlookuptable initstate = do
-  putStrLn $ "Action lookup table for " ++ showContext context
+  putStrLn $ "Constraints: " ++ showContext context
   (_,state) <- runStateT (repRun info context actionlookuptable) initstate
   -- (_,state) <- runStateT (runAll info context actionlookuptable) initstate
   let (_,_,typingtable,alloctable,allocobjs,_) = state
@@ -763,8 +763,21 @@ mkActionClass :: Info -> Class -> IO ActionLookupTable
 mkActionClass info (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
   actionvars     <- mkActionVar (n, p, is) (getVtypes info)
-  return $ wrapFieldInit (concat actionmethodss) actionvars
+  actionlookuptable <- mapM compatibleClass 
+                       $ wrapFieldInit (concat actionmethodss) actionvars
+  return actionlookuptable 
   where
+    compatibleClass :: ActionLookupTableEntry -> IO (ActionIdentifier, ActionMember)
+    compatibleClass (MethodActionId c m mid, actionmember) = do
+      action <- mkCompatibleClass n actionmember
+      return (MethodActionId c m mid, action)
+    compatibleClass (FieldActionId c f fid, actionmember) = do
+      action <- mkCompatibleClass n actionmember
+      return (FieldActionId c f fid, action)
+    compatibleClass (VarActionId c maybemid v vid, actionmember) = do
+      action <- mkCompatibleClass n actionmember
+      return (VarActionId c maybemid v vid, action)
+    
     wrapFieldInit :: ActionLookupTable -> ActionLookupTable -> ActionLookupTable
     wrapFieldInit actionmethods actionvars = 
       let memorizedactionmethods = map memorizedActionEntry actionmethods 
@@ -831,6 +844,22 @@ memorizedActionEntry (VarActionId c maybemid v vid, a) =
           Just _  -> return ()
   in (VarActionId c maybemid v vid, check a)
      
+isCallable info c alloctable context =
+  if isEmptyContext context then True
+  else 
+    let objc = head [ newc | (id,_,newc) <- alloctable
+                           , id==head (reverse context) ]
+    in subType info (TypeName objc) (TypeName c)
+       
+mkCompatibleClass :: ClassName -> ActionMember -> IO ActionMember
+mkCompatibleClass n action = 
+  return $ compatibleaction action
+  where 
+    compatibleaction action info context = do
+      alloctable <- getAllocLabelTable
+      if isCallable info n alloctable context == False
+        then return ()
+        else action info context
     
 mkActionMDecl :: ClassInfo -> MemberDecl -> IO ActionLookupTable
 mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
@@ -838,19 +867,11 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
   return [( MethodActionId n m id, 
             mkaction actionstmt (n, p, is, Just (m,id)) )]
   where
-    mkaction actionstmt typingctx info context 
-      | isEmptyContext context && elem "static" attrs == False = return ()
-      | otherwise = mkaction' actionstmt typingctx info context 
+    mkaction actionstmt typingctx info context =
+      if isEmptyContext context && elem "static" attrs == False 
+      then return () 
+      else mkaction' actionstmt typingctx info context 
 
-          --           do
-          -- maybe <- lookupAllocTableEntry 
-          --          (n, context, m, id, head (reverse context))
-          -- let cond = isEmptyContext context == False && isJust maybe 
-          --            || isEmptyContext context
-          -- if cond 
-          --   then mkaction' actionstmt typingctx info context 
-          --   else return ()
-                    
     mkaction' actionstmt typingctx info context = do
       maybethisaty <- getVartyping n context Nothing "this" numThis
       Just retaty  <- getVartyping n context (Just (m,id)) "return" numReturn
