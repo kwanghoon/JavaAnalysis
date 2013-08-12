@@ -301,7 +301,7 @@ isWorklistEmpty _  = False
 nextFromWorklist l = (head l, tail l)
 
 -- A Table for Unique Allocation Labels
-type AllocLabelTable = [(UniqueId, AllocLabelLocation, ClassName)]
+type AllocLabelTable = [(Context, AllocLabelLocation, ClassName)]
 type AllocLabelLocation = (ClassName, Context, MethodName, UniqueId, Label)
 
 --
@@ -470,14 +470,20 @@ lookupAllocTableEntry  entry = do
     (h:_) -> return $ Just h
 
 putAllocTableEntry :: AllocLabelLocation -> ClassName -> StateT AnalysisState IO Label
-putAllocTableEntry entry newc = do
+putAllocTableEntry entry@(cname,context,m,mid,label) newc = do
   id <- newId
   (worklist,constraints,typingtable,alloctable,uniqueid) <- get
-  put (worklist,constraints,typingtable,(id,entry,newc):alloctable,uniqueid)
+  let newContext = addContext length_k context id
+  put (worklist,constraints,typingtable,(newContext,entry,newc):alloctable,uniqueid)
   return id
   
+getAllocLabelTable :: StateT AnalysisState IO AllocLabelTable
+getAllocLabelTable = do
+  (_,_,_,alloctable,_) <- get
+  return alloctable
+
 prAllocLabelTable :: AllocLabelTable -> IO ()  
-prAllocLabelTable alloctable= do
+prAllocLabelTable alloctable = do
   putStrLn "Alloc Labels"
   mapM_ pr $ reverse $ alloctable
   where
@@ -541,38 +547,94 @@ lookupVarTyping typingtable c ctx maybemid v vid =
 prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
 prActionLookupTable info context actionlookuptable initstate = do
   putStrLn $ "Action lookup table for " ++ showContext context
-  (_,state) <- runStateT (foldr f (return ()) actionlookuptable) initstate
+  -- (_,state) <- runStateT (repRun info context actionlookuptable) initstate -- TODO: here!!!
+  (_,state) <- runStateT (runAll info context actionlookuptable) initstate
   let (_,_,typingtable,alloctable,_) = state
   prTypingTable typingtable
   prAllocLabelTable alloctable
+
+repRun :: Info -> Context -> ActionLookupTable -> StateT AnalysisState IO ()
+repRun info context actionlookuptable = do
+  runAll info context actionlookuptable
+  alloctable1 <- getAllocLabelTable
+  liftIO $ prAllocLabelTable alloctable1
+  repRun' 1 info actionlookuptable
+
+repRun' :: Int -> Info -> ActionLookupTable -> StateT AnalysisState IO ()
+repRun' n info actionlookuptable = do
+  liftIO $ putStrLn $ "repRun: " ++ show n
+  alloctable1 <- getAllocLabelTable
+  runAllContext alloctable1
+  alloctable2 <- getAllocLabelTable
+  liftIO $ prAllocLabelTable alloctable2
+  if length alloctable1 == length alloctable2 then return ()
+    else repRun' (n+1) info actionlookuptable
+         
   where
-    f :: ActionLookupTableEntry 
-         -> StateT AnalysisState IO () 
-         -> StateT AnalysisState IO ()
-    f entry m = do 
-      pr info context entry
-      m
+    runAllContext = foldr f (return ())
+    f (ctx,_,_) m = do runAll info ctx actionlookuptable
+                       m
     
-    pr info context (MethodActionId c m id, actionmethod) = do
-      constraints0 <- getConstraints
-      resetConstraints []
-      liftIO $ putStrLn $ concat [c, ",", m, ",", show id, "(", showContext context, ")", ":"]
-      _ <- actionmethod info context
-      constraints <- getConstraints
-      liftIO $ mapM_ pr1 (reverse constraints) -- reverse for better readability
-      resetConstraints (constraints ++ constraints0)
+runAll :: Info -> Context -> ActionLookupTable -> StateT AnalysisState IO ()
+runAll info context actionlookuptable = 
+  foldr (runOneEntry info context) (return()) actionlookuptable
+    
+runOneEntry :: Info -> Context -> ActionLookupTableEntry 
+               -> StateT AnalysisState IO () 
+               -> StateT AnalysisState IO ()
+runOneEntry info context entry m = do 
+  prActionLookupTableEntry info context entry
+  m
+    
+-- prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
+-- prActionLookupTable info context actionlookuptable initstate = do
+--   putStrLn $ "Action lookup table for " ++ showContext context
+--   (_,state) <- runStateT (runAll actionlookuptable) initstate
+--   let (_,_,typingtable,alloctable,_) = state
+--   prTypingTable typingtable
+--   prAllocLabelTable alloctable
+--   where
+--     runAll actionlookuptable = foldr runOneEntry (return()) actionlookuptable
+    
+--     runOneEntry :: ActionLookupTableEntry 
+--          -> StateT AnalysisState IO () 
+--          -> StateT AnalysisState IO ()
+--     runOneEntry entry m = do 
+--       prActionLookupTableEntry info context entry
+--       m
+
+prActionLookupTableEntry info context (MethodActionId c m id, actionmethod) = do
+  constraints0 <- getConstraints
+  resetConstraints []
+  liftIO $ putStrLn $ concat [c, ",", m, ",", show id, "(", showContext context, ")", ":"]
+  _ <- actionmethod info context
+  constraints <- getConstraints
+  liftIO $ mapM_ prConstraint (reverse constraints) -- reverse for better readability
+  resetConstraints (constraints ++ constraints0)
       
-    pr info context (FieldActionId c f id, actionfield) = do
-      constraints0 <- getConstraints
-      resetConstraints []
-      liftIO $ putStrLn $ concat [c, ",", f, ",", show id, "(", showContext context, ")", ":"]
-      _ <- actionfield info context
-      constraints <- getConstraints
-      liftIO $ mapM_ pr1 (reverse constraints) -- reverse for better readability
-      resetConstraints (constraints ++ constraints0)
+prActionLookupTableEntry info context (FieldActionId c f id, actionfield) = do
+  constraints0 <- getConstraints
+  resetConstraints []
+  liftIO $ putStrLn $ concat [c, ",", f, ",", show id, "(", showContext context, ")", ":"]
+  _ <- actionfield info context
+  constraints <- getConstraints
+  liftIO $ mapM_ prConstraint (reverse constraints) -- reverse for better readability
+  resetConstraints (constraints ++ constraints0)
+      
+prActionLookupTableEntry info context (VarActionId c maybemid x id, actionvar) = do      
+  constraints0 <- getConstraints
+  resetConstraints []
+  liftIO $ putStrLn $ concat $ [c, ","] ++ tostr maybemid ++ [x, ",", show id]
+  _ <- actionvar info context
+  constraints <- getConstraints
+  liftIO $ mapM_ prConstraint (reverse constraints)
+  resetConstraints (constraints ++ constraints0)
+  where
+    tostr Nothing       = []
+    tostr (Just (m,id)) = [m, ",", show id, ","]
     
 
-    pr1 constraint = do
+prConstraint constraint = do
       putStr   $ " - "
       putStrLn $ show constraint
       
@@ -722,8 +784,7 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
             mkaction actionstmt (n, p, is, Just (m,id)) )]
   where
     mkaction actionstmt typingctx info context 
-      | isEmptyContext context && elem "static" attrs == False = 
-        return ()
+      | isEmptyContext context && elem "static" attrs == False = return ()
       | otherwise = mkaction' actionstmt typingctx info context 
 
           --           do
