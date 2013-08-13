@@ -528,7 +528,7 @@ putAllocLabelTable alloctable = do
 
 prAllocLabelTable :: AllocLabelTable -> IO ()  
 prAllocLabelTable alloctable = do
-  putStrLn "Alloc Labels"
+  putStrLn "Allocated Objects and Their Labels"
   mapM_ pr $ reverse $ alloctable
   where
     pr (id, (c,m,mid,label), newc) = 
@@ -614,8 +614,11 @@ prActionLookupTable info context actionlookuptable initstate = do
   -- (_,state) <- runStateT (runAllActions info context actionlookuptable) initstate
   let (_,_,typingtable,alloctable,allocobjs,_) = state
   prTypingTable typingtable
+  putStrLn ""
   prAllocLabelTable alloctable
-  prAllocObjs allocobjs
+  putStrLn ""
+  -- prAllocObjs allocobjs
+  -- putStrLn ""
 
 repRun :: Info -> Context -> ActionLookupTable -> StateT AnalysisState IO ()
 repRun info context actionlookuptable = do
@@ -678,6 +681,7 @@ solveAllConstraints = do
   constraints   <- getConstraints
   let solution1 = solve constraints
   (n, solution) <- solveAllConstraints' 1 solution1 
+  liftIO $ putStrLn $ ""
   liftIO $ putStrLn $ "Solving Constraints [" ++ show n ++ " iterations]"
   liftIO $ mapM_ prSolution $ sort $ solution
   liftIO $ putStrLn $ ""
@@ -688,8 +692,9 @@ prSolution (id, Set set) =
 
 solveAllConstraints' :: Int -> Solution -> StateT AnalysisState IO (Int, Solution)
 solveAllConstraints' n solution1 = do
-  liftIO $ putStrLn $ "An intermediate solution1: " ++ show n
-  liftIO $ mapM_ prSolution $ sort $ solution1
+  liftIO $ putStr $ ". "
+  -- liftIO $ putStrLn $ "An intermediate solution1: " ++ show n
+  -- liftIO $ mapM_ prSolution $ sort $ solution1
   
   constraints     <- getConstraints
   newconstraintss <- mapM (resolveConstraint solution1) constraints
@@ -924,12 +929,15 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
       let aargtys = map fromJust maybeaargtys
       let aargdecls = [ (x,aty) | ((_, x, id),aty) <- zip argdecls aargtys ] 
           
+      putTyping (M n context m id aargtys retaty eff)
+      
       _ <-
         if elem "static" attrs == False 
         then do let id = getAnno (fromJust maybethisaty)
 --                putConstraint (C_upper id (Set [context]))
                 putConstraint (C_lower (Set [context]) id)
         else return ()
+             
           
       typingenv0 <-
         if elem "static" attrs == False
@@ -938,9 +946,6 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
         else return []
           
       let typingenv = typingenv0 ++ [("return", retaty)] ++ aargdecls
-          
-      putTyping (M n context m id aargtys retaty eff)
-      
       _ <- actionstmt typingenv typingctx info context
       return ()
       
@@ -960,11 +965,14 @@ mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
       eff       <- newEffVar
       let aargtys = map fromJust maybeaargtys
       let aargdecls = [ (x,aty) | ((_, x, id),aty) <- zip argdecls aargtys ]
-          
-      let typingenv = [("this", thisaty), ("return", retaty)] ++ aargdecls
-          
       putTyping (M n context m id aargtys retaty eff)
+          
+      let thisid = getAnno thisaty
+      let retid  = getAnno retaty
+      putConstraint (C_lower (Set [context]) thisid)
+      putConstraint (C_lower (Set [context]) retid)
       
+      let typingenv = [("this", thisaty), ("return", retaty)] ++ aargdecls
       _ <- actionstmt typingenv typingctx info context
       return ()
   
