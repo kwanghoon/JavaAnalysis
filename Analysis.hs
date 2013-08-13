@@ -46,6 +46,9 @@ staticContext = [uniqueidforstatic]
 addContext :: Int -> Context -> Label -> Context
 addContext k context label = reverse $ take k $ reverse $ context ++ [label]
 
+emptyContext :: Context
+emptyContext = []
+
 isEmptyContext [] = True
 isEmptyContext _  = False
 
@@ -152,15 +155,24 @@ data Constraint  =
     -- C_field C{X} f D{Z}              ===> C{X}.f <: D{Z}
   | C_field AnnoType FieldName AnnoType
     
+    -- C_staticfield C f D{Z}           ===> C.f <: D{Z}
+  | C_staticfield TypeName FieldName AnnoType
+
     -- C_assign D Z C X f               ===> D{Z} <: C{X}
   | C_assign AnnoType AnnoType
 
     -- C_assignfield C{X} D{Z}f         ===> C{X} <: D{Z}.f
   | C_assignfield AnnoType AnnoType FieldName 
     
+    -- C_assignstaticfield C{X} D f         ===> C{X} <: D.f
+  | C_assignstaticfield AnnoType TypeName FieldName 
+
     -- C_invoke C X m [S1,...,Sn] eff T ===> C{X}.m <: (S1,...,Sn) --eff--> T 
   | C_invoke AnnoType MethodName [AnnoType] Effect AnnoType
     
+    -- C_staticinvoke C m [S1,...,Sn] eff T ===> C.m <: (S1,...,Sn) --eff--> T
+  | C_staticinvoke TypeName MethodName [AnnoType] Effect AnnoType
+
     -- C_effect eff1 eff2               ===> eff1 <= eff2
   | C_effect Effect UniqueId
     
@@ -178,12 +190,18 @@ instance Show Constraint where
     conc [ constraint_var_prefix, show x, " ", "<=", " ", constraint_var_prefix, show y ]
   showsPrec p (C_field aty1 f aty2) = 
     conc [ show aty1, ".", f, " ", "<:", " ", show aty2 ]
+  showsPrec p (C_staticfield ty1 f aty2) = 
+    conc [ show ty1, ".", f, " ", "<:", " ", show aty2 ]
   showsPrec p (C_assign aty1 aty2) = 
     conc [ show aty1, " ", "<:", " ", show aty2 ]
   showsPrec p (C_assignfield aty1 aty2 f) = 
     conc [ show aty1, " ", "<:", " ", show aty2, ".", f ]
+  showsPrec p (C_assignstaticfield aty1 ty2 f) = 
+    conc [ show aty1, " ", "<:", " ", show ty2, ".", f ]
   showsPrec p (C_invoke aty1 m atys2 eff aty2) = 
     conc [ show aty1, ".", m, " ", "<:", " ", showMethodtype atys2 eff aty2 ]
+  showsPrec p (C_staticinvoke ty1 m atys2 eff aty2) = 
+    conc [ show ty1, ".", m, " ", "<:", " ", showMethodtype atys2 eff aty2 ]
   showsPrec p (C_effect eff id) = 
     conc [ show eff, " ", "<=", " ", show (EffVar id) ]
   showsPrec p (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) =
@@ -231,9 +249,12 @@ solveOne (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) cenv =
   $ foldr f cenv (zip atys1 atys2)
   where
     f (aty1,aty2) cenv = solveOne (C_assign aty2 aty1) cenv
-solveOne (C_field _ _ _) cenv = cenv    
-solveOne (C_assignfield _ _ _) cenv = cenv
-solveOne (C_invoke _ _ _ _ _) cenv = cenv
+solveOne (C_field _ _ _)             cenv = cenv
+solveOne (C_staticfield _ _ _)       cenv = cenv
+solveOne (C_assignfield _ _ _)       cenv = cenv
+solveOne (C_assignstaticfield _ _ _) cenv = cenv
+solveOne (C_invoke _ _ _ _ _)        cenv = cenv
+solveOne (C_staticinvoke _ _ _ _ _)  cenv = cenv
 solveOne c cenv = error (show c)
     
 
@@ -368,16 +389,17 @@ putConstraint constraint = do
   
 -- resolveConstraint c = do return [c]
 -- {-                         
-resolveConstraint ::  Solution -> Constraint -> StateT AnalysisState IO [Constraint]
-resolveConstraint cenv (C_assignfield aty1 aty2 f) = do
+resolveConstraint ::  Info -> Solution -> Constraint -> StateT AnalysisState IO [Constraint]
+resolveConstraint info cenv (C_assignfield aty1 aty2 f) = do
   (_,constraints,typingtable,_,_,_) <- get
   let cid  = getAnno aty2
+  let c    = case aty2 of { AnnoType c _ -> c; _ -> "" } -- TODO: something missing
   -- let cenv = solve constraints
   let Set ctxs = lookupCEnv cenv cid
-  let c    = case aty2 of { AnnoType c _ -> c; _ -> "" } -- TODO: something missing
   let atys = [ aty' | F c' context' f' id' aty' <- typingtable
                     , context <- ctxs
-                    , c==c' && context==context' && f==f' ]
+                    , subType info (TypeName c) (TypeName c') {- c==c' -} 
+                      && context==context' && f==f' ]
   
   -- liftIO $ putStrLn $ "resolveConstraint:"
   -- liftIO $ putStrLn $ show (C_assignfield aty1 aty2 f)
@@ -387,15 +409,34 @@ resolveConstraint cenv (C_assignfield aty1 aty2 f) = do
   
   return $ {- [ C_assignfield aty1 aty2 f ] ++ -} [ C_assign aty1 aty | aty <- atys ]
   
-resolveConstraint cenv (C_field aty1 f aty2) = do
+resolveConstraint info cenv (C_assignstaticfield aty1 ty2 f) = do
   (_,constraints,typingtable,_,_,_) <- get
-  let cid  = getAnno aty1
+  let c    = case ty2 of { TypeName c -> c; _ -> "" } -- TODO: something missing
   -- let cenv = solve constraints
-  let Set ctxs = lookupCEnv cenv cid
-  let c    = case aty1 of { AnnoType c _ -> c; _ -> "" } -- TODO: something missing
+  let Set ctxs = Set [emptyContext]
   let atys = [ aty' | F c' context' f' id' aty' <- typingtable
                     , context <- ctxs
-                    , c==c' && context==context' && f==f' ]
+                    , subType info (TypeName c) (TypeName c') {- c==c' -}
+                      && context==context' && f==f' ]
+  
+  -- liftIO $ putStrLn $ "resolveConstraint:"
+  -- liftIO $ putStrLn $ show (C_assignfield aty1 aty2 f)
+  -- liftIO $ putStrLn $ show [ C_assign aty1 aty | aty <- atys ]
+  -- liftIO $ putStrLn $ show cenv
+  -- liftIO $ putStrLn $ show constraints
+  
+  return $ {- [ C_assignstaticfield aty1 ty2 f ] ++ -} [ C_assign aty1 aty | aty <- atys ]
+
+resolveConstraint info cenv (C_field aty1 f aty2) = do
+  (_,constraints,typingtable,_,_,_) <- get
+  let cid  = getAnno aty1
+  let c    = case aty1 of { AnnoType c _ -> c; _ -> "" } -- TODO: something missing
+  -- let cenv = solve constraints
+  let Set ctxs = lookupCEnv cenv cid
+  let atys = [ aty' | F c' context' f' id' aty' <- typingtable
+                    , context <- ctxs
+                    , subType info (TypeName c') (TypeName c) {- c==c' -} 
+                      && context==context' && f==f' ]
              
   -- liftIO $ putStrLn $ "resolveConstraint:"
   -- liftIO $ putStrLn $ show (C_field aty1 f aty2)
@@ -405,15 +446,35 @@ resolveConstraint cenv (C_field aty1 f aty2) = do
   
   return $ {- [ C_field aty1 f aty2 ] ++ -} [ C_assign aty aty2 | aty <- atys ]
   
-resolveConstraint cenv (C_invoke cty m atys eff aty) = do
+resolveConstraint info cenv (C_staticfield ty1 f aty2) = do
+  (_,constraints,typingtable,_,_,_) <- get
+  let c    = case ty1 of { TypeName c -> c; _ -> "" } -- TODO: something missing
+  -- let cenv = solve constraints
+  let Set ctxs = Set [emptyContext]
+  let atys = [ aty' | F c' context' f' id' aty' <- typingtable
+                    , context <- ctxs
+                    , subType info (TypeName c') (TypeName c) {- c==c' -} 
+                      && context==context' && f==f' ]
+             
+  -- liftIO $ putStrLn $ "resolveConstraint:"
+  -- liftIO $ putStrLn $ show (C_field aty1 f aty2)
+  -- liftIO $ putStrLn $ show [ C_assign aty aty2 | aty <- atys ]
+  -- liftIO $ putStrLn $ show cenv
+  -- liftIO $ putStrLn $ show constraints
+  
+  return $ {- [ C_staticfield ty1 f aty2 ] ++ -} [ C_assign aty aty2 | aty <- atys ]
+
+resolveConstraint info cenv (C_invoke cty m atys eff aty) = do
   (_,constraints,typingtable,_,_,_) <- get
   let cid = getAnno cty
+  let c   = case cty of { AnnoType c _ -> c; _ -> "" }
   -- let cenv = solve constraints
   let Set ctxs = lookupCEnv cenv cid
-  let mtypes =
-        [ (matys, maty, meff) | M c' context' m' id' matys maty meff <- typingtable
-                              , context <- ctxs
-                              , context==context' && m==m' ] -- TODO: any condition on c'?
+  let mtypes = [ (matys, maty, meff) 
+               | M c' context' m' id' matys maty meff <- typingtable
+               , context <- ctxs
+               , subType info (TypeName c') (TypeName c)
+                 && context==context' && m==m' ] -- TODO: any condition on c'?
 
   -- liftIO $ putStrLn $ "resolveConstraint:"
   -- liftIO $ putStrLn $ show (C_invoke cty m atys eff aty)
@@ -421,10 +482,33 @@ resolveConstraint cenv (C_invoke cty m atys eff aty) = do
   -- liftIO $ putStrLn $ show cenv
   -- liftIO $ putStrLn $ show constraints
 
-  return $ {- [ C_invoke cty m atys eff aty ] ++ -} [ C_mtype matys meff maty atys eff aty | (matys, maty, meff) <- mtypes ]
+  return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
+    [ C_mtype matys meff maty atys eff aty | (matys, maty, meff) <- mtypes ]
+    
+resolveConstraint info cenv (C_staticinvoke ty m atys eff aty) = do
+  (_,constraints,typingtable,_,_,_) <- get
+  let c   = case ty of { TypeName c -> c; _ -> "" }
+  -- let cenv = solve constraints
+  let Set ctxs = Set [emptyContext]
+  let mtypes = [ (matys, maty, meff) 
+               | M c' context' m' id' matys maty meff <- typingtable
+               , context <- ctxs
+               , subType info (TypeName c') (TypeName c)
+                 && context==context' && m==m' ] -- TODO: any condition on c'?
+
+  -- liftIO $ putStrLn $ "resolveConstraint:"
+  -- liftIO $ putStrLn $ show (C_invoke cty m atys eff aty)
+  -- liftIO $ putStrLn $ show [ C_mtype matys meff maty atys eff aty | (matys, maty, meff) <- mtypes ]
+  -- liftIO $ putStrLn $ show cenv
+  -- liftIO $ putStrLn $ show constraints
+
+  return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
+    [ C_mtype matys meff maty atys eff aty | (matys, maty, meff) <- mtypes ]
+
+    
 -- -}
   
-resolveConstraint cenv c = return []
+resolveConstraint info cenv c = return []
   
 getTyping :: StateT AnalysisState IO TypingTable
 getTyping = do
@@ -630,7 +714,7 @@ repRun info context actionlookuptable = do
   n <- repRun' 1 info actionlookuptable
   liftIO $ putStrLn $ "[" ++ show n ++ " " ++ "iterations" ++ "]"
   liftIO $ putStrLn $ ""
-  solveAllConstraints
+  solveAllConstraints info
 
 repRun' :: Int -> Info -> ActionLookupTable -> StateT AnalysisState IO Int
 repRun' n info actionlookuptable = do
@@ -676,11 +760,11 @@ runOneEntry info context entry m = do
 --       prActionLookupTableEntry info context entry
 --       m
   
-solveAllConstraints :: StateT AnalysisState IO ()
-solveAllConstraints = do
+solveAllConstraints :: Info -> StateT AnalysisState IO ()
+solveAllConstraints info = do
   constraints   <- getConstraints
   let solution1 = solve constraints
-  (n, solution) <- solveAllConstraints' 1 solution1 
+  (n, solution) <- solveAllConstraints' info 1 solution1 
   liftIO $ putStrLn $ ""
   liftIO $ putStrLn $ "Solving Constraints [" ++ show n ++ " iterations]"
   liftIO $ mapM_ prSolution $ sort $ solution
@@ -690,21 +774,21 @@ prSolution (id, Set set) =
   putStrLn $ " - " ++ show id ++ " = " ++ 
   "{ " ++ concat (intersperse "," (map showContext set)) ++ " }"
 
-solveAllConstraints' :: Int -> Solution -> StateT AnalysisState IO (Int, Solution)
-solveAllConstraints' n solution1 = do
+solveAllConstraints' :: Info -> Int -> Solution -> StateT AnalysisState IO (Int, Solution)
+solveAllConstraints' info n solution1 = do
   liftIO $ putStr $ ". "
   -- liftIO $ putStrLn $ "An intermediate solution1: " ++ show n
   -- liftIO $ mapM_ prSolution $ sort $ solution1
   
   constraints     <- getConstraints
-  newconstraintss <- mapM (resolveConstraint solution1) constraints
+  newconstraintss <- mapM (resolveConstraint info solution1) constraints
   let newconstraints = concat [ c:cs | (c,cs) <- zip constraints newconstraintss ]
         -- constraints ++ concat newconstraintss
       
   let solution2 = solve newconstraints
   if identicalSolution solution1 solution2 
     then return (n, solution1)
-    else do resetConstraints newconstraints; solveAllConstraints' (n+1) solution2
+    else do resetConstraints newconstraints; solveAllConstraints' info (n+1) solution2
 
 
 prActionLookupTableEntry info context (MethodActionId c m id, actionmethod) = do
@@ -1186,15 +1270,15 @@ mkActionExpr (StaticField c f maybety) = do
     actionStaticfield c f ty typingenv typingctx info context = do
       let maybefty    = lookupFields info c f
       let (fty,attrs) = fromJust maybefty
-      cty <- mkAnnoType c
+      -- cty <- mkAnnoType c
       aty <- mkAnnoType ty
-      let cid = getAnno cty
---      putConstraint (C_upper cid (Set [staticContext]))
-      putConstraint (C_lower (Set [staticContext]) cid) 
+      -- let cid = getAnno cty
+      -- putConstraint (C_upper cid (Set [staticContext]))
+      -- putConstraint (C_lower (Set [staticContext]) cid) 
       -- [TEST: resolveConstraint function]
       -- resolvedConstraints <- resolveConstraint (C_field cty f aty)
       -- mapM_ putConstraint (C_field cty f aty : resolvedConstraints)
-      putConstraint (C_field cty f aty)
+      putConstraint (C_staticfield c f aty)
       return (aty, noEffect)
   
 mkActionExpr (New c es label) = do
@@ -1263,14 +1347,14 @@ mkActionExpr (Assign (StaticField c f maybety) e2) = do
     actionAssignField :: TypeName -> FieldName -> TypeName -> ActionExpr -> ActionExpr
     actionAssignField c f ty actionexp2 typingenv typingctx info context = do
       (aty2,eff2) <- actionexp2 typingenv typingctx info context
-      cty <- mkAnnoType c
-      let cid = getAnno cty
---      putConstraint (C_upper cid (Set [staticContext]))
-      putConstraint (C_lower (Set [staticContext]) cid)
+      -- cty <- mkAnnoType c
+      -- let cid = getAnno cty
+      -- putConstraint (C_upper cid (Set [staticContext]))
+      -- putConstraint (C_lower (Set [staticContext]) cid)
       -- [TEST: resolveConstraint function]
       -- resolvedConstraints <- resolveConstraint (C_assignfield aty2 cty f)
       -- mapM_ putConstraint (C_assignfield aty2 cty f : resolvedConstraints)
-      putConstraint (C_assignfield aty2 cty f)
+      putConstraint (C_assignstaticfield aty2 c f)
       avoidty <- mkVoidType 
       return (avoidty, eff2)
 
@@ -1333,18 +1417,18 @@ mkActionExpr (StaticInvoke c m es maybety) = do
     actionStaticinvoke c m actionexps ty typingenv typingctx info context = do
       atyeffs <- mapM (\actionexp -> actionexp typingenv typingctx info context) actionexps
       let (atyes,effes) = unzip atyeffs
-      cty  <- mkAnnoType c
+      -- cty  <- mkAnnoType c
       aty  <- mkAnnoType ty
       effm <- newEffVar
-      let cid = getAnno cty
+      -- let cid = getAnno cty
       let eff = foldr EffUnion noEffect effes
           
---      putConstraint (C_upper cid (Set [staticContext]))
-      putConstraint (C_lower (Set [staticContext]) cid)
+      -- putConstraint (C_upper cid (Set [staticContext]))
+      -- putConstraint (C_lower (Set [staticContext]) cid)
       -- [TEST: resolveConstraint function]
       -- resolvedConstraints <- resolveConstraint (C_invoke cty m atyes effm aty)
       -- mapM_ putConstraint (C_invoke cty m atyes effm aty : resolvedConstraints)
-      putConstraint (C_invoke cty m atyes effm aty)
+      putConstraint (C_staticinvoke c m atyes effm aty)
       return (aty, eff)
       
 mkActionExpr (ConstTrue) = do
