@@ -38,6 +38,8 @@
   - [SyntaxAnalysis] Add a default constructor if there is no constructr in a given class. (DONE)
   - [Analysis] a bug in handling arrays
   - [Analysis] Suppress unnecessary generation of constraints for a class in case a given context does not match with the class [DONE]
+  - [Analysis] Can we drop AllocObjs? (AllocObjs vs. AllocLabelTable)
+  - [Analysis] Drop WorkList.
 
 2. Analysis
   - TypingEnv -> [(VarName, UniqueId, AnnoType)]
