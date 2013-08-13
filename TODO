@@ -40,6 +40,9 @@
   - [Analysis] Suppress unnecessary generation of constraints for a class in case a given context does not match with the class [DONE]
   - [Analysis] Can we drop AllocObjs? (AllocObjs vs. AllocLabelTable)
   - [Analysis] Drop WorkList.
+  - [Analysis] String analysis. The omega function.
+  - [Analysis] Effect handling
+  - [Analysis] Android analysis driver
 
 2. Analysis
   - TypingEnv -> [(VarName, UniqueId, AnnoType)]
