@@ -30,6 +30,8 @@ instance Show Set where
   showsPrec p (Set s) =
     conc $ [ "{", " " ] ++ comma (map showContext s) ++ [ " ", "}" ]
     
+emptySet = Set []    
+    
 showContext :: Context -> String    
 showContext []         = "empty"
 showContext [obj]      = obj_alloc_site_prefix ++ show obj
@@ -130,14 +132,21 @@ showMethodtype atys eff aty = concat $
   ["("] ++ comma (map show atys) ++ [ ")", "--", show eff, "-->", show aty]
 
 -- Effects
-data Effect = Eff [ClassName] | EffVar UniqueId | EffUnion Effect Effect
+data Effect = Eff BaseEffect | EffVar UniqueId | EffUnion Effect Effect 
+            deriving (Eq, Ord)
 
 instance Show Effect where
-  showsPrec p (Eff cs)    = conc $ [ "{" ] ++ comma cs ++ [ "}" ]
+  showsPrec p (Eff baseeff) = conc $ [ show baseeff ]
   showsPrec p (EffVar id) = conc [ effect_var_prefix, show id ]
   showsPrec p (EffUnion eff1 eff2) = conc [ show eff1, " ", "U", " ", show eff2 ]
 
-noEffect = Eff []
+noEffect = Eff (BaseEff [])
+
+data BaseEffect = BaseEff [ClassName] | EffTop deriving (Eq, Ord)
+
+instance Show BaseEffect where
+  showsPrec p (BaseEff cs) = conc $ [ "{" ] ++ comma cs ++ [ "}" ]
+  showsPrec p EffTop       = conc $ [ "T" ]
 
 -- Constraints
 type Constraints = [Constraint]
@@ -205,61 +214,106 @@ instance Show Constraint where
   showsPrec p (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) =
     conc [ showMethodtype atys1 eff1 aty1, " ", "<:", " ", showMethodtype atys2 eff2 aty2 ]
     
--- A very^k inefficient constraint solving method
+-- A very^k (k>=2) inefficient constraint solving method
 -- TODO: To replace this with union-find algorithm
   
-type Solution = [(UniqueId, Set)]
+type Solution = ([(UniqueId, Set)], [(UniqueId, BaseEffect)])
 
-identicalSolution solution1 solution2 = 
-  length solution1 == length solution2 
-  && sort solution1 == sort solution2
+identicalSolution (cenv1,eenv1) (cenv2,eenv2) = 
+  length cenv1 == length cenv2 && length eenv1 == length eenv2
+  && sort cenv1 == sort cenv2 && sort eenv1 == sort eenv2
 
 solve :: Constraints -> Solution
-solve constraints = nochange $ rep (solveAll constraints) []
+solve constraints = nochange $ rep (solveAll constraints) ([],[])
   where
     rep f x = x : rep f (f x)
-    nochange (cenv1:cenv2:cenvs) = 
-      if sort cenv1==sort cenv2 then cenv1 else nochange (cenv2:cenvs)
+    nochange (sol1:sol2:sols) = 
+      if identicalSolution sol1 sol2 then sol1 else nochange (sol2:sols)
   
-solveAll constraints cenv = foldr solveOne cenv constraints
+solveAll :: Constraints -> Solution -> Solution
+solveAll constraints sol = foldr solveOne sol constraints
 
-solveOne (C_lower set x) cenv = 
-  (x, foldr unionSet set [ set' | (x',set') <- cenv, x==x' ]) 
+solveOne :: Constraint -> Solution -> Solution
+solveOne (C_lower set x) (cenv,eenv) = 
+  ((x, foldr unionSet set [ set' | (x',set') <- cenv, x==x' ]) 
   : [ (x', set') | (x',set') <- cenv, x/=x' ]
-solveOne (C_var x1 x2) cenv =
-  (x2, foldr unionSet set1 [ set' | (x',set') <- cenv, x2==x' ])
+  , eenv)
+solveOne (C_var x1 x2) (cenv,eenv) =
+  ((x2, foldr unionSet set1 [ set' | (x',set') <- cenv, x2==x' ])
   : [ (x',set') | (x',set') <- cenv, x2/=x' ]
+  , eenv)
   where
     set1 = lookupCEnv cenv x1
-solveOne (C_assign (AnnoType _ x) (AnnoType _ y)) cenv = 
-  solveOne (C_var x y) cenv
-solveOne (C_assign (AnnoArrayType aty x) (AnnoType _ y)) cenv = 
-  solveOne (C_var x y) cenv
-solveOne (C_assign (AnnoType "null" x1) (AnnoArrayType aty2 x2)) cenv = 
-  solveOne (C_var x1 x2) cenv
-solveOne (C_assign (AnnoArrayType aty1 x1) (AnnoArrayType aty2 x2)) cenv = 
-  solveOne (C_var x1 x2) cenv
-solveOne (C_effect eff1 eff2) cenv =  -- TODO: handling effects
-  cenv
-solveOne (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) cenv = 
-  solveOne (C_assign aty1 aty2)
-  -- $ solveOne (C_effect eff1 eff2) -- TODO: handling effects
-  $ foldr f cenv (zip atys1 atys2)
+solveOne (C_assign (AnnoType _ x) (AnnoType _ y)) sol = 
+  solveOne (C_var x y) sol
+solveOne (C_assign (AnnoArrayType aty x) (AnnoType _ y)) sol = 
+  solveOne (C_var x y) sol
+solveOne (C_assign (AnnoType "null" x1) (AnnoArrayType aty2 x2)) sol = 
+  solveOne (C_var x1 x2) sol
+solveOne (C_assign (AnnoArrayType aty1 x1) (AnnoArrayType aty2 x2)) sol = 
+  solveOne (C_var x1 x2) sol
+solveOne (C_effect eff1 eff2) sol =  -- TODO: handling effects
+  solveEff eff1 eff2 sol
+solveOne (C_mtype atys1 eff1 aty1 atys2 (EffVar effvar2) aty2) sol = 
+  solveEff eff1 effvar2
+  $ solveOne (C_assign aty1 aty2)
+  $ foldr f sol (zip atys1 atys2)
   where
-    f (aty1,aty2) cenv = solveOne (C_assign aty2 aty1) cenv
-solveOne (C_field _ _ _)             cenv = cenv
-solveOne (C_staticfield _ _ _)       cenv = cenv
-solveOne (C_assignfield _ _ _)       cenv = cenv
-solveOne (C_assignstaticfield _ _ _) cenv = cenv
-solveOne (C_invoke _ _ _ _ _)        cenv = cenv
-solveOne (C_staticinvoke _ _ _ _ _)  cenv = cenv
-solveOne c cenv = error (show c)
-    
+    f (aty1,aty2) sol = solveOne (C_assign aty2 aty1) sol
+solveOne (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) sol = 
+  error "solveOne: C_mtype: eff2 must be a effect variable."
+solveOne (C_field _ _ _)             sol = sol
+solveOne (C_staticfield _ _ _)       sol = sol
+solveOne (C_assignfield _ _ _)       sol = sol
+solveOne (C_assignstaticfield _ _ _) sol = sol
+solveOne (C_invoke _ _ _ _ _)        sol = sol
+solveOne (C_staticinvoke _ _ _ _ _)  sol = sol
+solveOne c sol = error (show c)
 
+solveEff :: Effect -> UniqueId -> Solution -> Solution
+solveEff eff id (cenv,eenv) = 
+  (cenv, eenv')
+  where
+    eenv' = (id, mergeBaseEffs [ baseeff' | (id',baseeff') <- eenv, id==id' ])
+            : [ (id',eff') | (id',eff') <- eenv, id/=id' ]
+            
+mergeBaseEffs :: [BaseEffect] -> BaseEffect
+mergeBaseEffs []                  = BaseEff []
+mergeBaseEffs (EffTop:_)          = EffTop
+mergeBaseEffs (BaseEff cs: bases) = 
+  case mergeBaseEffs bases of
+    BaseEff cs' -> BaseEff $ cs++cs'
+    EffTop      -> EffTop
+    
+getEff :: [(UniqueId,BaseEffect)] -> Effect -> BaseEffect
+getEff eenv eff = 
+  case getEff' eenv eff of
+    Nothing -> EffTop
+    Just cs -> BaseEff cs
+  
+getEff' :: [(UniqueId,BaseEffect)] -> Effect -> Maybe [ClassName]
+getEff' eenv (Eff (BaseEff cs)) = return cs
+getEff' eenv (Eff EffTop)       = Nothing
+getEff' eenv (EffVar id) = 
+  case [base' | (id',base') <- eenv, id==id'] of
+       []    -> return []
+       bases -> if EffTop `elem` bases 
+                then Nothing 
+                else return $ concat (map (\(BaseEff cs) -> cs) bases)
+getEff' eenv (EffUnion eff1 eff2) = do
+  cs1 <- getEff' eenv eff1
+  cs2 <- getEff' eenv eff2
+  return (cs1++cs2)
+    
 unionSet (Set s1) (Set s2) = Set $ nub (s1 ++ s2)
 
-lookupCEnv cenv x = foldr unionSet (Set [])
+lookupCEnv cenv x = foldr unionSet emptySet
   [ set' | (x',set') <- cenv, x==x' ]
+
+unionEff eff1 eff2 = EffUnion eff1 eff2
+
+lookupEEnv eenv x = foldr unionEff noEffect
+  [ eff' | (x',eff') <- eenv, x==x' ]
 
 --
 type TypingTable = [TableEntry]
@@ -390,7 +444,7 @@ putConstraint constraint = do
 -- resolveConstraint c = do return [c]
 -- {-                         
 resolveConstraint ::  Info -> Solution -> Constraint -> StateT AnalysisState IO [Constraint]
-resolveConstraint info cenv (C_assignfield aty1 aty2 f) = do
+resolveConstraint info (cenv,eenv) (C_assignfield aty1 aty2 f) = do
   (constraints,typingtable,_,_,_) <- get
   let cid  = getAnno aty2
   let c    = case aty2 of { AnnoType c _ -> c; _ -> "" } -- TODO: something missing
@@ -409,7 +463,7 @@ resolveConstraint info cenv (C_assignfield aty1 aty2 f) = do
   
   return $ {- [ C_assignfield aty1 aty2 f ] ++ -} [ C_assign aty1 aty | aty <- atys ]
   
-resolveConstraint info cenv (C_assignstaticfield aty1 ty2 f) = do
+resolveConstraint info (cenv,eenv) (C_assignstaticfield aty1 ty2 f) = do
   (constraints,typingtable,_,_,_) <- get
   let c    = case ty2 of { TypeName c -> c; _ -> "" } -- TODO: something missing
   -- let cenv = solve constraints
@@ -427,7 +481,7 @@ resolveConstraint info cenv (C_assignstaticfield aty1 ty2 f) = do
   
   return $ {- [ C_assignstaticfield aty1 ty2 f ] ++ -} [ C_assign aty1 aty | aty <- atys ]
 
-resolveConstraint info cenv (C_field aty1 f aty2) = do
+resolveConstraint info (cenv,eenv) (C_field aty1 f aty2) = do
   (constraints,typingtable,_,_,_) <- get
   let cid  = getAnno aty1
   let c    = case aty1 of { AnnoType c _ -> c; _ -> "" } -- TODO: something missing
@@ -446,7 +500,7 @@ resolveConstraint info cenv (C_field aty1 f aty2) = do
   
   return $ {- [ C_field aty1 f aty2 ] ++ -} [ C_assign aty aty2 | aty <- atys ]
   
-resolveConstraint info cenv (C_staticfield ty1 f aty2) = do
+resolveConstraint info (cenv,eenv) (C_staticfield ty1 f aty2) = do
   (constraints,typingtable,_,_,_) <- get
   let c    = case ty1 of { TypeName c -> c; _ -> "" } -- TODO: something missing
   -- let cenv = solve constraints
@@ -464,7 +518,7 @@ resolveConstraint info cenv (C_staticfield ty1 f aty2) = do
   
   return $ {- [ C_staticfield ty1 f aty2 ] ++ -} [ C_assign aty aty2 | aty <- atys ]
 
-resolveConstraint info cenv (C_invoke cty m atys eff aty) = do
+resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
   (constraints,typingtable,_,_,_) <- get
   let cid = getAnno cty
   let c   = case cty of { AnnoType c _ -> c; _ -> "" }
@@ -485,7 +539,7 @@ resolveConstraint info cenv (C_invoke cty m atys eff aty) = do
   return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
     [ C_mtype matys meff maty atys eff aty | (matys, maty, meff) <- mtypes ]
     
-resolveConstraint info cenv (C_staticinvoke ty m atys eff aty) = do
+resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   (constraints,typingtable,_,_,_) <- get
   let c   = case ty of { TypeName c -> c; _ -> "" }
   -- let cenv = solve constraints
@@ -508,7 +562,7 @@ resolveConstraint info cenv (C_staticinvoke ty m atys eff aty) = do
     
 -- -}
   
-resolveConstraint info cenv c = return []
+resolveConstraint info (cenv,eenv) c = return []
   
 getTyping :: StateT AnalysisState IO TypingTable
 getTyping = do
@@ -770,18 +824,23 @@ solveAllConstraints info = do
   (n, solution) <- solveAllConstraints' info 1 solution1 
   liftIO $ putStrLn $ ""
   liftIO $ putStrLn $ "Solving Constraints [" ++ show n ++ " iterations]"
-  liftIO $ mapM_ prSolution $ sort $ solution
+  liftIO $ mapM_ prCenv $ sort $ fst $ solution
+  liftIO $ mapM_ prEenv $ sort $ snd $ solution
   liftIO $ putStrLn $ ""
 
-prSolution (id, Set set) = 
-  putStrLn $ " - " ++ show id ++ " = " ++ 
+prCenv (id, Set set) = 
+  putStrLn $ " - " ++ constraint_var_prefix ++ show id ++ " = " ++ 
   "{ " ++ concat (intersperse "," (map showContext set)) ++ " }"
+
+prEenv (id, eff) = 
+  putStrLn $ " - " ++ effect_var_prefix ++ show id ++ " = " ++ show eff
 
 solveAllConstraints' :: Info -> Int -> Solution -> StateT AnalysisState IO (Int, Solution)
 solveAllConstraints' info n solution1 = do
   liftIO $ putStr $ ". "
-  -- liftIO $ putStrLn $ "An intermediate solution1: " ++ show n
-  -- liftIO $ mapM_ prSolution $ sort $ solution1
+  liftIO $ putStrLn $ "An intermediate solution1: " ++ show n
+  -- liftIO $ mapM_ prCenv $ sort $ fst $ solution1
+  -- liftIO $ mapM_ prEenv $ sort $ snd $ solution1
   
   constraints     <- getConstraints
   newconstraintss <- mapM (resolveConstraint info solution1) constraints
