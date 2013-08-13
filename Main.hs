@@ -107,5 +107,6 @@ tc_java = map ("./sample/java/" ++)
             "LocVar.java",
             "Lhs.java",
             "Static.java",
-            "MemberInit.java"
+            "MemberInit.java",
+            "Str.java"
           ]         

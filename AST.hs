@@ -367,7 +367,7 @@ numExpr (Field e n maybety) o = (Field e' n maybety, o')
   where
     (e',o') = numExpr e o
 numExpr (StaticField c n maybety) o = (StaticField c n maybety, o)
-numExpr (New c es _) o = (New c es o, o') 
+numExpr (New c es _) o = (New c es' o, o') 
   where
     (es',o') = numExprs es (o+1)
 numExpr (Assign e1 e2) o = (Assign e1' e2', o2)
