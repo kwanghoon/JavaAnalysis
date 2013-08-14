@@ -7,7 +7,7 @@ import Analysis
 import System.Environment
 import Data.List
 import Data.Maybe
-import CPUTime
+import System.CPUTime
 
 main =
   do args <- getArgs
