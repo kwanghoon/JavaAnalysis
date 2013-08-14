@@ -142,7 +142,9 @@ instance Show Effect where
 
 noEffect = Eff (BaseEff [])
 
-data BaseEffect = BaseEff [ClassName] | EffTop deriving (Eq, Ord)
+type EffectOfInterest = MethodName
+
+data BaseEffect = BaseEff [EffectOfInterest] | EffTop deriving (Eq, Ord)
 
 instance Show BaseEffect where
   showsPrec p (BaseEff cs) = conc $ [ "{" ] ++ comma cs ++ [ "}" ]
@@ -223,12 +225,17 @@ identicalSolution (cenv1,eenv1) (cenv2,eenv2) =
   length cenv1 == length cenv2 && length eenv1 == length eenv2
   && sort cenv1 == sort cenv2 && sort eenv1 == sort eenv2
 
-solve :: Constraints -> Solution
-solve constraints = nochange $ rep (solveAll constraints) ([],[])
+solve :: Constraints -> StateT AnalysisState IO Solution
+solve constraints = 
+  nochange $ rep (solveAll constraints) ([],[])
   where
     rep f x = x : rep f (f x)
-    nochange (sol1:sol2:sols) = 
-      if identicalSolution sol1 sol2 then sol1 else nochange (sol2:sols)
+    nochange (sol1:sol2:sols) = do
+      -- liftIO $ putStrLn $ "Solving..."
+      -- liftIO $ prSolution sol1
+      if identicalSolution sol1 sol2 
+      then return sol1 
+      else nochange (sol2:sols)
   
 solveAll :: Constraints -> Solution -> Solution
 solveAll constraints sol = foldr solveOne sol constraints
@@ -252,16 +259,18 @@ solveOne (C_assign (AnnoType "null" x1) (AnnoArrayType aty2 x2)) sol =
   solveOne (C_var x1 x2) sol
 solveOne (C_assign (AnnoArrayType aty1 x1) (AnnoArrayType aty2 x2)) sol = 
   solveOne (C_var x1 x2) sol
-solveOne (C_effect eff1 eff2) sol =  -- TODO: handling effects
-  solveEff eff1 eff2 sol
-solveOne (C_mtype atys1 eff1 aty1 atys2 (EffVar effvar2) aty2) sol = 
-  solveEff eff1 effvar2
+solveOne (C_effect eff1 effvar2) (cenv,eenv) =
+  assignEff (getEff eenv eff1) effvar2 (cenv,eenv)
+solveOne (C_mtype atys1 (EffVar effvar1) aty1 atys2 (EffVar effvar2) aty2) sol = 
+  (\(cenv,eenv) -> assignEff (lookupEEnv eenv effvar1) effvar1 (cenv,eenv))
+  $ solveEff effvar2
+  $ solveEff effvar1
   $ solveOne (C_assign aty1 aty2)
   $ foldr f sol (zip atys1 atys2)
   where
     f (aty1,aty2) sol = solveOne (C_assign aty2 aty1) sol
 solveOne (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) sol = 
-  error "solveOne: C_mtype: eff2 must be a effect variable."
+  error "solveOne: C_mtype: eff1 and eff2 must be a effect variable."
 solveOne (C_field _ _ _)             sol = sol
 solveOne (C_staticfield _ _ _)       sol = sol
 solveOne (C_assignfield _ _ _)       sol = sol
@@ -270,8 +279,8 @@ solveOne (C_invoke _ _ _ _ _)        sol = sol
 solveOne (C_staticinvoke _ _ _ _ _)  sol = sol
 solveOne c sol = error (show c)
 
-solveEff :: Effect -> UniqueId -> Solution -> Solution
-solveEff eff id (cenv,eenv) = 
+solveEff :: UniqueId -> Solution -> Solution
+solveEff id (cenv,eenv) = 
   (cenv, eenv')
   where
     eenv' = (id, mergeBaseEffs [ baseeff' | (id',baseeff') <- eenv, id==id' ])
@@ -282,8 +291,17 @@ mergeBaseEffs []                  = BaseEff []
 mergeBaseEffs (EffTop:_)          = EffTop
 mergeBaseEffs (BaseEff cs: bases) = 
   case mergeBaseEffs bases of
-    BaseEff cs' -> BaseEff $ cs++cs'
+    BaseEff cs' -> BaseEff $ nub $ cs++cs'
     EffTop      -> EffTop
+    
+assignEff :: BaseEffect -> UniqueId -> Solution -> Solution
+assignEff baseeff1 effvar2 (cenv,eenv) =
+  (cenv,eenv')
+  where
+    baseeffs2 = [ baseeff | (id,baseeff) <- eenv, id==effvar2 ]
+    eenv' = (effvar2, mergeBaseEffs (baseeff1 : baseeffs2))
+            : [ (id,baseeff) | (id,baseeff) <- eenv, id/=effvar2 ]
+            
     
 getEff :: [(UniqueId,BaseEffect)] -> Effect -> BaseEffect
 getEff eenv eff = 
@@ -303,17 +321,17 @@ getEff' eenv (EffVar id) =
 getEff' eenv (EffUnion eff1 eff2) = do
   cs1 <- getEff' eenv eff1
   cs2 <- getEff' eenv eff2
-  return (cs1++cs2)
+  return (nub (cs1++cs2))
     
 unionSet (Set s1) (Set s2) = Set $ nub (s1 ++ s2)
 
 lookupCEnv cenv x = foldr unionSet emptySet
   [ set' | (x',set') <- cenv, x==x' ]
 
-unionEff eff1 eff2 = EffUnion eff1 eff2
-
-lookupEEnv eenv x = foldr unionEff noEffect
-  [ eff' | (x',eff') <- eenv, x==x' ]
+lookupEEnv eenv x = 
+  case [ eff' | (x',eff') <- eenv, x==x' ] of
+    (h:_) -> h
+    []    -> error $ "lookupEEnv: " ++ "Can't find " ++ effect_var_prefix ++ show x
 
 --
 type TypingTable = [TableEntry]
@@ -769,6 +787,10 @@ repRun info context actionlookuptable = do
   -- liftIO $ prAllocLabelTable alloctable
   -- liftIO $ prAllocObjs allocobjs
   n <- repRun' 1 info actionlookuptable
+  constraints <- getConstraints
+  -- liftIO $ putStrLn $ ""
+  -- liftIO $ putStrLn $ "Constraints:"
+  -- liftIO $ mapM_ prConstraint $ reverse $ constraints
   liftIO $ putStrLn $ "[" ++ show n ++ " " ++ "iterations" ++ "]"
   liftIO $ putStrLn $ ""
   solveAllConstraints info
@@ -820,13 +842,22 @@ runOneEntry info context entry m = do
 solveAllConstraints :: Info -> StateT AnalysisState IO ()
 solveAllConstraints info = do
   constraints   <- getConstraints
-  let solution1 = solve constraints
+  
+  liftIO $ putStrLn $ "Initial constraints"
+  liftIO $ mapM_ prConstraint $ constraints
+  liftIO $ putStrLn $ ""
+  
+  solution1 <- solve constraints
   (n, solution) <- solveAllConstraints' info 1 solution1 
   liftIO $ putStrLn $ ""
   liftIO $ putStrLn $ "Solving Constraints [" ++ show n ++ " iterations]"
-  liftIO $ mapM_ prCenv $ sort $ fst $ solution
-  liftIO $ mapM_ prEenv $ sort $ snd $ solution
+  liftIO $ prSolution $ solution
   liftIO $ putStrLn $ ""
+
+prSolution (cenv, eenv) = do
+  mapM_ prCenv (sort cenv)
+  liftIO $ putStrLn $ ""
+  mapM_ prEenv (sort eenv)
 
 prCenv (id, Set set) = 
   putStrLn $ " - " ++ constraint_var_prefix ++ show id ++ " = " ++ 
@@ -838,16 +869,18 @@ prEenv (id, eff) =
 solveAllConstraints' :: Info -> Int -> Solution -> StateT AnalysisState IO (Int, Solution)
 solveAllConstraints' info n solution1 = do
   liftIO $ putStr $ ". "
-  liftIO $ putStrLn $ "An intermediate solution1: " ++ show n
-  -- liftIO $ mapM_ prCenv $ sort $ fst $ solution1
-  -- liftIO $ mapM_ prEenv $ sort $ snd $ solution1
+  -- liftIO $ putStrLn $ "An intermediate solution1: " ++ show n
+  -- liftIO $ prSolution $ solution1
   
   constraints     <- getConstraints
   newconstraintss <- mapM (resolveConstraint info solution1) constraints
   let newconstraints = concat [ c:cs | (c,cs) <- zip constraints newconstraintss ]
-        -- constraints ++ concat newconstraintss
       
-  let solution2 = solve newconstraints
+  -- liftIO $ putStrLn $ "Generated new constraints at the iteration " ++ show n
+  -- liftIO $ mapM_ prConstraint $ concat $ newconstraintss
+  -- liftIO $ putStrLn $ ""
+      
+  solution2 <- solve newconstraints
   if identicalSolution solution1 solution2 
     then return (n, solution1)
     else do resetConstraints newconstraints; solveAllConstraints' info (n+1) solution2
@@ -1064,8 +1097,9 @@ mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
         else return []
           
       let typingenv = typingenv0 ++ [("return", retaty)] ++ aargdecls
-      _ <- actionstmt typingenv typingctx info context
-      return ()
+      (_,effstmt) <- actionstmt typingenv typingctx info context
+      let EffVar effvar = eff
+      putConstraint (C_effect effstmt effvar)
       
 mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
   actionstmt <- mkActionStmt stmt
@@ -1091,8 +1125,9 @@ mkActionMDecl (n, p, is) (ConstrDecl m id argdecls stmt) = do
       putConstraint (C_lower (Set [context]) retid)
       
       let typingenv = [("this", thisaty), ("return", retaty)] ++ aargdecls
-      _ <- actionstmt typingenv typingctx info context
-      return ()
+      (_,effstmt) <- actionstmt typingenv typingctx info context
+      let EffVar effvar = eff
+      putConstraint (C_effect effstmt effvar)
   
 mkActionMDecl (n, p, is) (FieldDecl attrs ty f id maybee) = do
   actionmaybeexpr <- mkActionMaybeExpr maybee
@@ -1336,7 +1371,11 @@ mkActionExpr (New c es label) = do
       uniqueContext <- putAllocTableEntry context (cname, m, id, label) newc None
       putConstraint (C_lower (Set [uniqueContext]) cid)
       addInvokeConstraint c cid cty atys effVar
-      return (cty, eff)
+      
+      -- Effect Test
+      let TypeName cname = c
+      let effconstr = Eff (BaseEff [cname])
+      return (cty, EffUnion eff effconstr)
       
     addInvokeConstraint c@(TypeName cn)  cid cty   atys eff = do
       -- [TEST: resolveConstraint function]
@@ -1441,7 +1480,11 @@ mkActionExpr (Invoke e m es maybety) = do
       -- resolvedConstraints <- resolveConstraint (C_invoke atye m atyes effm aty)
       -- mapM_ putConstraint (C_invoke atye m atyes effm aty : resolvedConstraints)
       putConstraint (C_invoke atye m atyes effm aty)
-      return (aty, eff)
+      
+      -- Effect Test
+      let effmivk = Eff (BaseEff [m])
+      
+      return (aty, EffUnion eff effmivk)
       
 mkActionExpr (StaticInvoke c m es maybety) = do      
   actionexps <- mapM mkActionExpr es
@@ -1463,7 +1506,11 @@ mkActionExpr (StaticInvoke c m es maybety) = do
       -- resolvedConstraints <- resolveConstraint (C_invoke cty m atyes effm aty)
       -- mapM_ putConstraint (C_invoke cty m atyes effm aty : resolvedConstraints)
       putConstraint (C_staticinvoke c m atyes effm aty)
-      return (aty, eff)
+      
+      -- Effect Test
+      let effmivk = Eff (BaseEff [m])
+
+      return (aty, EffUnion eff effmivk)
       
 mkActionExpr (ConstTrue) = do
   return $ actionConst (TypeName "boolean")
@@ -1484,8 +1531,8 @@ mkActionExpr (ConstLit s label) = do
     actionLit label typingenv typingctx info context = do
       aty <- mkAnnoType (TypeName strClass)
       let id = getAnno aty
-      let entry = (strClass, "lit"++s, 0, label) --
-      uniqueContext <-   -- TODO: id is not necessarily 0.
+      let entry = (strClass, "lit_"++s, 0, label) --
+      uniqueContext <-
         putAllocTableEntry context entry strClass (Lit s)
       putConstraint (C_lower (Set [uniqueContext]) id)
       return (aty, noEffect)

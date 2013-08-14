@@ -7,21 +7,33 @@ import Analysis
 import System.Environment
 import Data.List
 import Data.Maybe
+import CPUTime
 
 main =
   do args <- getArgs
      run args
      
-run args =
-  do css <- mapM parse args
-     let cs = numProgram $ concat $ css
-     putStrLn $ prprog $ cs
-     maybeinfoprog <- typecheck cs
-     let (info,program) = fromJust maybeinfoprog
-     if isNothing maybeinfoprog
-        then return ()
-        else doAnalysis program info
+run args = do 
+  startTime <- getCPUTime
+  
+  css <- mapM parse args
+  let cs = numProgram $ concat $ css
+  putStrLn $ prprog $ cs
+  maybeinfoprog <- typecheck cs
+  let (info,program) = fromJust maybeinfoprog
+  if isNothing maybeinfoprog
+    then return ()
+    else doAnalysis program info
+         
+  endTime <- getCPUTime
+  prElapsedSeconds startTime endTime
+  putStrLn "done."
           
+prElapsedSeconds s e = do
+  let elapsedtime = e - s
+  let timeinfloat = read (show elapsedtime) :: Float
+  putStrLn $ show (timeinfloat / 10^12) ++ " seconds in total"
+
 parse arg =           
   do s <- readFile arg
      return (parseprog . lexer $ s)
@@ -38,7 +50,6 @@ toks arg =
 
 dotest filelist = 
   do run filelist
-     putStrLn "done."
      
 tc_android = map ("./sample/androidgame/" ++)
              [ 
