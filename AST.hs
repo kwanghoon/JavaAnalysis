@@ -66,6 +66,23 @@ data Class = Class [Attrib] Name (Maybe Name) [Name] MemberDecls
 type MemberDecls = [MemberDecl]
 
 data TypeName = TypeName Name | ArrayTypeName TypeName
+
+isBoolean (TypeName "boolean") = True
+isBoolean _ = False
+
+isInt (TypeName "int") = True
+isInt _ = False
+
+isArray (ArrayTypeName _) = True
+isArray ( _) = False
+
+elemType (ArrayTypeName c) = c
+elemType _ = error "elemType: called with non-array type"
+
+eqType (TypeName t) (TypeName s) = t == s
+eqType (ArrayTypeName t) (ArrayTypeName s) = eqType t s
+eqType _ _ = False 
+
   
 type ArgDecls = [(TypeName, Name, UniqueId)]
 
@@ -93,7 +110,7 @@ data Expr =
   | ConstNum String
   | ConstLit String Label
   | ConstChar String
-  | Prim Name [Expr]
+  | Prim Name [TypeName] [Expr] -- for argument types
             
 data Stmt = 
     Expr Expr
@@ -169,19 +186,19 @@ instance Show Expr where
   showsPrec p (ConstNum n) = conc [n]
   showsPrec p (ConstLit s label) = conc ["\"", s, "\""] . allocLabel p label
   showsPrec p (ConstChar s) = conc ["\'", s, "\'"]
-  showsPrec p (Prim "==" [x,y]) = conc [show x, "==", show y]
-  showsPrec p (Prim "!=" [x,y]) = tabstop p . conc [show x, "!=", show y]
-  showsPrec p (Prim "primAddButton" [x]) = 
+  showsPrec p (Prim "==" _ [x,y]) = conc [show x, "==", show y]
+  showsPrec p (Prim "!=" _ [x,y]) = tabstop p . conc [show x, "!=", show y]
+  showsPrec p (Prim "primAddButton" _ [x]) = 
     tabstop p . conc ["primAddButton", "(", show x, ")"]
-  showsPrec p (Prim "primStartActivity" [x]) = 
+  showsPrec p (Prim "primStartActivity" _ [x]) = 
     tabstop p . conc ["primStartActivity", "(", show x, ")"]
-  showsPrec p (Prim "[]" [x,y]) = tabstop p . conc [show x, "[", show y, "]"]
+  showsPrec p (Prim "[]" _ [x,y]) = tabstop p . conc [show x, "[", show y, "]"]
   -- showsPrec p (Prim "[]=" [x,y]) = tabstop p . conc [show x, "=", show y]
-  showsPrec p (Prim "super" [x]) = 
+  showsPrec p (Prim "super" _ [x]) = 
     tabstop p . conc ["super", "(", show x, ")"]
-  showsPrec p (Prim "<" [x,y]) = tabstop p . conc [show x, "<", show y]
-  showsPrec p (Prim "++" [x,y]) = tabstop p . conc [show x, "++"]
-  showsPrec p (Prim "--" [x,y]) = tabstop p . conc [show x, "--"]
+  showsPrec p (Prim "<" _ [x,y]) = tabstop p . conc [show x, "<", show y]
+  showsPrec p (Prim "++" _ [x,y]) = tabstop p . conc [show x, "++"]
+  showsPrec p (Prim "--" _ [x,y]) = tabstop p . conc [show x, "--"]
   
 instance Show Stmt where  
   showsPrec p (Expr e) = tabstop p . conc [ show e, ";", "\n"]
@@ -391,7 +408,7 @@ numExpr (ConstNull) o = (ConstNull, o)
 numExpr (ConstNum s) o = (ConstNum s, o)
 numExpr (ConstLit s _) o = (ConstLit s o, o+1)
 numExpr (ConstChar s) o = (ConstChar s, o)
-numExpr (Prim n es) o = (Prim n es', o')
+numExpr (Prim n tys es) o = (Prim n tys es', o')
   where
     (es',o') = numExprs es o
 

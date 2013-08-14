@@ -130,6 +130,11 @@ mkVoidType = do
 showMethodtype :: [AnnoType] -> Effect -> AnnoType -> String
 showMethodtype atys eff aty = concat $
   ["("] ++ comma (map show atys) ++ [ ")", "--", show eff, "-->", show aty]
+  
+  
+toType :: AnnoType -> TypeName  
+toType (AnnoType n id) = TypeName n
+toType (AnnoArrayType aty id) = ArrayTypeName (toType aty)
 
 -- Effects
 data Effect = Eff BaseEffect | EffVar UniqueId | EffUnion Effect Effect 
@@ -270,7 +275,8 @@ solveOne (C_mtype atys1 (EffVar effvar1) aty1 atys2 (EffVar effvar2) aty2) sol =
   where
     f (aty1,aty2) sol = solveOne (C_assign aty2 aty1) sol
 solveOne (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) sol = 
-  error "solveOne: C_mtype: eff1 and eff2 must be a effect variable."
+  error ("solveOne: C_mtype: eff1 and eff2 must be an effect variable." 
+         ++ show eff1 ++ " " ++ show eff2)
 solveOne (C_field _ _ _)             sol = sol
 solveOne (C_staticfield _ _ _)       sol = sol
 solveOne (C_assignfield _ _ _)       sol = sol
@@ -547,11 +553,32 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
   let c   = case cty of { AnnoType c _ -> c; _ -> "" }
   -- let cenv = solve constraints
   let Set ctxs = lookupCEnv cenv cid
-  let mtypes = [ (matys, maty, meff) 
-               | M c' context' m' id' matys maty meff <- typingtable
-               , context <- ctxs
-               , subType info (TypeName c') (TypeName c)
-                 && context==context' && m==m' ] -- TODO: any condition on c'?
+  -- TODO: any condition on c'?
+  -- let mtypes = [ (matys, maty, meff) 
+  --              | M c' context' m' id' matys maty meff <- typingtable
+  --              , context <- ctxs, context==context' 
+  --              , subType info (TypeName c') (TypeName c)
+  --                && m==m' 
+  --                && subTypes info (map toType atys) (map toType matys)
+  --              ] 
+
+  let maybemtypes = 
+        [ 
+          chooseMostSpecificMtype info
+          [ (bare_matys, bare_maty, (matys, maty, meff))
+          | M c' context' m' id' matys maty meff <- typingtable
+          , context==context' 
+          , let bare_atys  = map toType atys 
+          , let bare_matys = map toType matys
+          , let bare_maty  = toType maty
+          , subType info (TypeName c') (TypeName c)
+            && m==m' 
+            && subTypes info bare_atys bare_matys
+          ]
+          
+        | context <- ctxs ]
+        
+  let mtypes = [ a | Just a <- maybemtypes ]
 
   -- liftIO $ putStrLn $ "resolveConstraint:"
   -- liftIO $ putStrLn $ show (C_invoke cty m atys eff aty)
@@ -560,18 +587,36 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
   -- liftIO $ putStrLn $ show constraints
 
   return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
-    [ C_mtype matys meff maty atys eff aty | (matys, maty, meff) <- mtypes ]
+    [ C_mtype matys meff maty atys eff aty | (_, _, (matys, maty, meff)) <- mtypes ]
     
 resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   (constraints,typingtable,_,_,_) <- get
   let c   = case ty of { TypeName c -> c; _ -> "" }
   -- let cenv = solve constraints
   let Set ctxs = Set [emptyContext]
-  let mtypes = [ (matys, maty, meff) 
-               | M c' context' m' id' matys maty meff <- typingtable
-               , context <- ctxs
-               , subType info (TypeName c') (TypeName c)
-                 && context==context' && m==m' ] -- TODO: any condition on c'?
+  -- TODO: any condition on c'?
+  -- let mtypes = [ (matys, maty, meff) 
+  --              | M c' context' m' id' matys maty meff <- typingtable
+  --              , context <- ctxs
+  --              , subType info (TypeName c') (TypeName c)
+  --                && context==context' && m==m' ] 
+
+  let maybemtypes = 
+        [ 
+          chooseMostSpecificMtype info 
+          [ (bare_matys, bare_maty, (matys, maty, meff)) 
+          | M c' context' m' id' matys maty meff <- typingtable
+          , context==context'
+          , let bare_atys  = map toType atys
+          , let bare_matys = map toType matys
+          , let bare_maty  = toType maty
+          , subType info (TypeName c') (TypeName c)
+            && m==m' 
+            && subTypes info bare_atys bare_matys
+          ]
+        | context <- ctxs ]
+        
+  let mtypes = [ a | Just a <- maybemtypes ] 
 
   -- liftIO $ putStrLn $ "resolveConstraint:"
   -- liftIO $ putStrLn $ show (C_invoke cty m atys eff aty)
@@ -580,7 +625,7 @@ resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   -- liftIO $ putStrLn $ show constraints
 
   return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
-    [ C_mtype matys meff maty atys eff aty | (matys, maty, meff) <- mtypes ]
+    [ C_mtype matys meff maty atys eff aty | (_,_,(matys, maty, meff)) <- mtypes ]
 
     
 -- -}
@@ -1427,7 +1472,7 @@ mkActionExpr (New c es label) = do
       let effconstr = Eff (BaseEff [cname])
       return (cty, EffUnion eff effconstr)
       
-    addInvokeConstraint c@(TypeName cn)  cid cty   atys eff = do
+    addInvokeConstraint c@(TypeName cn) cid cty atys eff = do
       -- [TEST: resolveConstraint function]
       -- resolvedConstraints <- resolveConstraint (C_invoke cty cn atys eff cty)
       -- mapM_ putConstraint (C_invoke cty cn atys eff cty : resolvedConstraints)
@@ -1481,7 +1526,7 @@ mkActionExpr (Assign (StaticField c f maybety) e2) = do
       avoidty <- mkVoidType 
       return (avoidty, eff2)
 
-mkActionExpr (Assign (Prim "[]" [earr,eidx]) e2) = do
+mkActionExpr (Assign (Prim "[]" _ [earr,eidx]) e2) = do
   actionexparr <- mkActionExpr earr
   actionexpidx <- mkActionExpr eidx
   actionexp2   <- mkActionExpr e2
@@ -1591,22 +1636,64 @@ mkActionExpr (ConstLit s label) = do
 mkActionExpr (ConstChar s) = do  
   return $ actionConst (TypeName "char")
 
-mkActionExpr (Prim n es) = do
+mkActionExpr (Prim "[]" tys [e1,e2]) = do
+  actionexp1 <- mkActionExpr e1
+  actionexp2 <- mkActionExpr e2
+  return $ actionArray actionexp1 actionexp2 
+  where
+    actionArray actione1 actione2 typingenv typingctx info context = do
+      (atye1,effe1) <- actione1 typingenv typingctx info context
+      (atye2,effe2) <- actione2 typingenv typingctx info context
+      let AnnoArrayType atyelem idelem= atye1
+      return (atyelem, EffUnion effe1 effe2)
+
+mkActionExpr (Prim "super" tys es) = do
+  actiones <- mapM mkActionExpr es
+  return $ actionSuper actiones 
+  where
+    actionSuper actiones typingenv typingctx info context = do
+      atyeffs <- mapM (\a -> a typingenv typingctx info context) actiones
+      let (atys,effs) = unzip atyeffs
+      let (c, maybep, is, _) = typingctx
+      pc <- (case maybep of
+                Nothing -> error $ "mkActionExpr: super: " ++ show es
+                Just pc -> return pc)
+            
+      pcty   <- mkAnnoType (TypeName pc)
+      effVar <- newEffVar
+      let pcid = getAnno pcty
+      putConstraint (C_invoke pcty pc atys effVar pcty)
+      putConstraint (C_lower (Set [context]) pcid)
+      
+      -- Effect Test
+      let eff     = foldr EffUnion effVar effs
+      let effmivk = Eff (BaseEff [pc])
+      return (pcty, EffUnion eff effmivk)
+
+mkActionExpr (Prim n tys es) = do
   actiones <- mapM mkActionExpr es
   return $ actionprim actiones
   where
     actionprim :: [ActionExpr] -> ActionExpr
     actionprim actiones typingenv typingctx info context = do
       atyeffs <- mapM (\a -> a typingenv typingctx info context) actiones
-      actionConst (TypeName "boolean") typingenv typingctx info context -- TODO: Need to fix it!!!
-      -- if elem n ["==", "!="] == False
-      --   then actionprim' actiones
-      --   else actionprim'' actiones
+      if elem n ["==", "!="] == False
+        then actionprim'  actiones atyeffs typingenv typingctx info context
+        else actionprim'' actiones atyeffs typingenv typingctx info context
              
-    -- actionprim' actiones typingenv typingctx info context = do
-    --   atyeffs <- mapM (\a -> a typingenv typingctx info context) actiones
-    --   let (atyes,effes) = unzip atyeffs
-      
+    actionprim' actiones atyeffs typingenv typingctx info context = do
+      let (atyes,effes) = unzip atyeffs
+      let rettys = lookupPrim n tys
+      retty <- (case rettys of
+                   []      -> error $ "mkActionExpr: no such primitive " ++ n ++ " " ++ show tys
+                   [retty] -> return retty
+                   _       -> error $ "mkActionExpr: multiple primitives " ++ n ++ " " ++ show tys)
+      aty <- mkAnnoType retty
+      return (aty, noEffect)
+          
+    actionprim'' actiones atyeffs typingenv typingctx info context = do 
+      aty <- mkAnnoType (TypeName "boolean")
+      return (aty, noEffect)
 
 actionConst ty typingenv typingctx info context = do
   aty <- mkAnnoType ty

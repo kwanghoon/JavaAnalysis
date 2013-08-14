@@ -44,6 +44,7 @@
   - [Analysis] Effect handling (DONE)
   - [Analysis] Supporting several effect analyses at the same time
   - [Analysis] Android analysis driver
+  - [Analysis] new A() should perform new B()  when class A extends B. 
 
 2. Analysis
   - TypingEnv -> [(VarName, UniqueId, AnnoType)]

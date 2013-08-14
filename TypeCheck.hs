@@ -340,19 +340,6 @@ lookupMtype''' info c m argtys inheritance =
     [mt] -> mt
     mts  -> chooseMostSpecificMtype info (map fromJust mts)
     
-    
-chooseMostSpecificMtype info mtys =
-  case mtys1 of
-    []    -> Nothing -- Can't determine the most specific mtype
-    [mty] -> Just mty
-    mtys  -> Nothing -- Multiple is the most specific mtype
-  where
-    mtys1 = [ mty | (mty, mtys') <- 
-                 [ (mtys !! i, take (i-1) mtys ++ drop (i+1) mtys) 
-                 | i <- [0..length mtys-1]],  morespecificthan mty mtys' ]
-    morespecificthan (argty, _, _) mtys =
-      all (True==) [subTypes info argty argty' | (argty',_,_) <- mtys]
-    
 lookupKtype info (TypeName "int") argtys = Nothing
 lookupKtype info (TypeName "char") argtys = Nothing
 lookupKtype info (TypeName "double") argtys = Nothing
@@ -404,8 +391,8 @@ firstStmt (For maybe x e1 e2 e3 s) = Just (For maybe x e1 e2 e3 s, [])
 firstStmt (While e s) = Just (While e s, [])
 firstStmt (Block s) = Just (Block s, [])
 
-isSuperCall (Expr (Prim "super" es)) = True
-isSuperCall _                        = False
+isSuperCall (Expr (Prim "super" _ es)) = True
+isSuperCall _                          = False
 
 --
 tcExp :: Info -> TypingEnv -> Expr -> ErrorT TCError IO (TypeName, Expr)
@@ -495,13 +482,13 @@ tcExp info env (ConstNull) = return $ (TypeName "null", ConstNull) -- TODO: null
 tcExp info env (ConstNum n) = return $ (TypeName "int", ConstNum n)
 tcExp info env (ConstLit s label) = return $ (TypeName "String", ConstLit s label)
 tcExp info env (ConstChar s) = return $ (TypeName "char", ConstChar s)
-tcExp info env (Prim "[]" [e1,e2]) = 
+tcExp info env (Prim "[]" pargtys [e1,e2]) = 
   do (ty1, expr1) <- tcExp info env e1
      (ty2, expr2) <- tcExp info env e2
      if isArray ty1 == False || isInt ty2 == False
        then throwError ("tcExp: type mismatch in array indexing: " ++ 
-                        show (Prim "[]" [e1,e2]))
-       else return $ (elemType ty1, Prim "[]" [expr1,expr2])
+                        show (Prim "[]" pargtys [e1,e2]))
+       else return $ (elemType ty1, Prim "[]" pargtys [expr1,expr2])
 
 -- tcExp info env (Prim "[]=" [e1, e2]) = 
 --   do (ty1, expr1) <- tcExp info env e1
@@ -511,40 +498,43 @@ tcExp info env (Prim "[]" [e1,e2]) =
 --                         show (Prim "[]=" [e1, e2]))
 --        else return $ (TypeName "void", Prim "[]=" [expr1,expr2])
         
-tcExp info env (Prim "super" es) = 
-  do throwError ("tcExp: misplaced super call: " ++ show (Prim "super" es))
+tcExp info env (Prim "super" pargtys es) = 
+  do throwError ("tcExp: misplaced super call: " ++ show (Prim "super" pargtys es))
 
-tcExp info env (Prim n es) = 
+tcExp info env (Prim n pargtys es) = 
   if elem n ["==", "!="] == False
-     then tcExp' info env (Prim n es)
-     else tcExp'' info env (Prim n es)     
+     then tcExp' info env (Prim n pargtys es)
+     else tcExp'' info env (Prim n pargtys es)     
   
-tcExp' info env (Prim n es) =  
+tcExp' info env (Prim n pargtys es) =  
   do tyexprs <- mapM (tcExp info env) es
      let (tys,exprs) = unzip tyexprs
-     let mtypes = [(argtys,retty) | (p, argtys, retty) <- primTypeTable, p == n]
-     let rettys = [retty | (argtys, retty) <- mtypes
-                         , length tys == length argtys
-                         , all (True==) [eqType ty1 ty2 
-                                        | (ty1,ty2) <- zip tys argtys]]
+     let rettys = lookupPrim n tys
+         
+     -- let mtypes = [(argtys,retty) | (p, argtys, retty) <- primTypeTable, p == n]
+     -- let rettys = [retty | (argtys, retty) <- mtypes
+     --                     , length tys == length argtys
+     --                     , all (True==) [eqType ty1 ty2 
+     --                                    | (ty1,ty2) <- zip tys argtys]]
+         
      case rettys of
-       []  -> throwError ("tcExp: type mismatch in " ++ show (Prim n es))
-       [h] -> return $ (h, Prim n exprs)
-       _   -> throwError ("tcExp: multiple type matches: " ++ show (Prim n es))
+       []  -> throwError ("tcExp: type mismatch in " ++ show (Prim n tys es))
+       [h] -> return $ (h, Prim n tys exprs)
+       _   -> throwError ("tcExp: multiple type matches: " ++ show (Prim n tys es))
 
-tcExp'' info env (Prim n [e1,e2]) = -- ==, !=
+tcExp'' info env (Prim n pargtys [e1,e2]) = -- ==, !=
   do tyexprs <- mapM (tcExp info env) [e1,e2]
      let (tys,exprs) = unzip tyexprs
      let [ty1,ty2] = tys
      if (subType info ty1 ty2 || subType info ty2 ty1) == False
-       then throwError ("tcExp: type mismatch in " ++ show (Prim n [e1,e2]))
-       else return $ (TypeName "boolean", Prim n exprs)
+       then throwError ("tcExp: type mismatch in " ++ show (Prim n tys [e1,e2]))
+       else return $ (TypeName "boolean", Prim n tys exprs)
             
 --
 legalLhs (Var x)             = x /= "this"
 legalLhs (Field _ _ _)       = True
 legalLhs (StaticField _ _ _) = True
-legalLhs (Prim "[]" _)       = True
+legalLhs (Prim "[]" _ _)     = True
 legalLhs _                   = False
 
 
@@ -563,15 +553,15 @@ tcBeginStmt info ctx env retty stmt =
              else tcStmt info ctx env1 retty (head therest)
 
 tcSuperCall :: Info -> TypingCtx -> TypingEnv -> Stmt -> ErrorT TCError IO (TypingEnv, Stmt)
-tcSuperCall info ctx env (Expr (Prim "super" es)) =
+tcSuperCall info ctx env (Expr (Prim "super" pargtys es)) =
   do argtysexprs <- mapM (tcExp info env) es
      let (argtys2,argexprs) = unzip argtysexprs
      let p          = getParentClass ctx
      let maybektype = lookupKtype info (TypeName p) argtys2
      let argtys1    = fromJust maybektype
      if isNothing maybektype
-       then throwError ("tcExp: invalid super call: " ++ show (Prim "super" es))
-       else return $ (env, (Expr (Prim "super" argexprs)))
+       then throwError ("tcExp: invalid super call: " ++ show (Prim "super" argtys2 es))
+       else return $ (env, (Expr (Prim "super" argtys2 argexprs)))
         
 tcSuperCall info ctx env stmt =
   throwError ("tcSuperCall: unexpected statement: " ++ show stmt)
@@ -657,21 +647,7 @@ tcStmt info ctx env retty (Block s) =
      -- becomes dead if the block contains a return statement.
 
 --
-isBoolean (TypeName "boolean") = True
-isBoolean _ = False
+            
 
-isInt (TypeName "int") = True
-isInt _ = False
 
-isArray (ArrayTypeName _) = True
-isArray ( _) = False
-
-elemType (ArrayTypeName c) = c
-elemType _ = error "elemType: called with non-array type"
-
-eqType (TypeName t) (TypeName s) = t == s
-eqType (ArrayTypeName t) (ArrayTypeName s) = eqType t s
-eqType _ _ = False 
-
-               
      

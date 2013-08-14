@@ -66,6 +66,7 @@ basicMtypes = -- TODO: extension
     ]
   ]
 
+--            
 primTypeTable = 
   [ 
     ("<", [TypeName "int", TypeName "int"], TypeName "boolean"),
@@ -75,3 +76,10 @@ primTypeTable =
     ("primAddButton", [TypeName "int"], TypeName "void")
   ]
 
+lookupPrim :: PrimName -> [TypeName] -> [TypeName]
+lookupPrim n tys = rettys
+  where
+    mtypes = [(argtys,retty) | (p, argtys, retty) <- primTypeTable, p == n]
+    rettys = [retty | (argtys, retty) <- mtypes
+                    , length tys == length argtys
+                    , all (True==) [eqType ty1 ty2 | (ty1,ty2) <- zip tys argtys] ]

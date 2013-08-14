@@ -36,3 +36,15 @@ subMtype info (targs1, tret1) (targs2, tret2) =
   all (True==) [subType info t1 t2 | (t1,t2) <- zip targs2 targs1] &&
   subType info tret1 tret2
   
+chooseMostSpecificMtype :: Info -> [([TypeName], TypeName, a)] -> Maybe ([TypeName], TypeName, a)
+chooseMostSpecificMtype info mtys =
+  case mtys1 of
+    []    -> Nothing -- Can't determine the most specific mtype
+    [mty] -> Just mty
+    mtys  -> Nothing -- Multiple is the most specific mtype
+  where
+    mtys1 = [ mty | (mty, mtys') <- 
+                 [ (mtys !! i, take (i-1) mtys ++ drop (i+1) mtys) 
+                 | i <- [0..length mtys-1]],  morespecificthan mty mtys' ]
+    morespecificthan (argty, _, _) mtys =
+      all (True==) [subTypes info argty argty' | (argty',_,_) <- mtys]
