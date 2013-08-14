@@ -55,6 +55,7 @@ type ClassName  = Name
 type MethodName = Name
 type FieldName  = Name
 type VarName    = Name
+type PrimName   = Name
 
 --
 type Program = [Class]

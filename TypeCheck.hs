@@ -673,12 +673,5 @@ eqType (TypeName t) (TypeName s) = t == s
 eqType (ArrayTypeName t) (ArrayTypeName s) = eqType t s
 eqType _ _ = False 
 
-primTypeTable = 
-  [ ("primStartActivity", [TypeName "Intent"], TypeName "void"),
-    ("primAddButton", [TypeName "int"], TypeName "void"),
-    ("<", [TypeName "int", TypeName "int"], TypeName "boolean"),
-    ("++", [TypeName "int", TypeName "int"], TypeName "int"),
-    ("--", [TypeName "int", TypeName "int"], TypeName "int")
-  ]
                
      

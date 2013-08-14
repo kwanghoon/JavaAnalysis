@@ -65,3 +65,13 @@ basicMtypes = -- TODO: extension
       ("PrintStream", "println", [TypeName "String"], TypeName "void", [static], [], Nothing)
     ]
   ]
+
+primTypeTable = 
+  [ 
+    ("<", [TypeName "int", TypeName "int"], TypeName "boolean"),
+    ("++", [TypeName "int", TypeName "int"], TypeName "int"),
+    ("--", [TypeName "int", TypeName "int"], TypeName "int"),
+    ("primStartActivity", [TypeName "Intent"], TypeName "void"),
+    ("primAddButton", [TypeName "int"], TypeName "void")
+  ]
+

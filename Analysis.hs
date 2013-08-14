@@ -345,6 +345,9 @@ data TableEntry =
     -- V(C,ctx,m,k,x,j) = Xi
   | V ClassName Context (Maybe (MethodName, UniqueId)) VarName UniqueId AnnoType
     
+    -- P(p,k) = (Xi1, ... , Xin) ==> Xj
+  | P PrimName UniqueId [AnnoType] AnnoType Effect
+    
 instance Show TableEntry where    
   showsPrec p (F c context f id aty) = 
     conc [ " - ", c, "{", showContext context, "}", ".", f, ",", show id, " = ", show aty ]
@@ -354,6 +357,8 @@ instance Show TableEntry where
   showsPrec p (V c context maybemid v vid aty) =
     conc [ " - ", c, "{", showContext context, "}" ] .
     showMaybemid maybemid . conc [ ",", v, ",", show vid, " = ", show aty ]
+  showsPrec p (P m id atys aty eff) = 
+    conc [ " - ", m, ",", show id, " = ", showMethodtype atys eff aty ]
     
 showMaybemid (Just (m,id)) = conc [ ".", m, ",", show id ]
 showMaybemid (Nothing)     = conc [ "" ]
@@ -620,6 +625,20 @@ getMethodtyping c ctx m id = do
         ++ show (c,ctx,m,id)
       return Nothing
 
+getPrimtyping :: MethodName -> UniqueId 
+                   -> StateT AnalysisState IO (Maybe AnnoMethodType)
+getPrimtyping m id = do
+  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  retMaybeAnnomtype $ lookupPrimTyping typingtable m id
+  
+  where
+    retMaybeAnnomtype []  = return Nothing
+    retMaybeAnnomtype [h] = return $ Just h
+    retMaybeAnnomtype _   = do
+      liftIO $ putStrLn $ "getPrimtyping: duplicate prim typings for "
+        ++ show (m,id)
+      return Nothing
+
 getVartyping :: ClassName -> Context -> Maybe (MethodName,UniqueId) -> VarName 
                 -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
 getVartyping c ctx maybemid v vid = do
@@ -738,6 +757,7 @@ data ActionIdentifier =
     MethodActionId ClassName MethodName UniqueId
   | FieldActionId ClassName FieldName UniqueId
   | VarActionId ClassName (Maybe (MethodName, UniqueId)) VarName UniqueId
+  | PrimActionId PrimName UniqueId
     deriving Eq
   
 type ActionLookupTable = [ActionLookupTableEntry]
@@ -765,6 +785,11 @@ lookupVarTyping typingtable c ctx maybemid v vid =
   [ atyi | V ci ctxi maybemidi vi vidi atyi <- typingtable, 
     c==ci && ctx==ctxi && maybemid==maybemidi && v==vi && vid==vidi ]
   
+lookupPrimTyping typingtable m id =
+  [ (atysi, atyi, eff) 
+  | P mi idi atysi atyi eff <- typingtable
+  , m==mi && idi==id ]
+
 --
 prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
 prActionLookupTable info context actionlookuptable initstate = do
@@ -916,6 +941,15 @@ prActionLookupTableEntry info context (VarActionId c maybemid x id, actionvar) =
     tostr Nothing       = []
     tostr (Just (m,id)) = [m, ",", show id, ","]
     
+prActionLookupTableEntry info context (PrimActionId m id, actionmethod) = do
+  constraints0 <- getConstraints
+  resetConstraints []
+  liftIO $ putStrLn $ concat [m,",",show id, ":"]
+  _ <- actionmethod info context
+  constraints <- getConstraints
+  liftIO $ mapM_ prConstraint (reverse constraints) -- reverse for better readability
+  resetConstraints (constraints ++ constraints0)
+
 
 prConstraint constraint = do
       putStr   $ " - "
@@ -959,6 +993,14 @@ mkActionProgram info program = do
   actionmethodss <- mapM (mkActionClass info) program
   return $ concat $ actionmethodss
     
+-- mkActionPrim :: Info -> IO ActionLookupTable
+-- mkActionPrim info = do
+--   return $ actionprim
+--   where
+--     actionprim :: ActionLookupTable
+--     actionprim = do
+      
+
 mkActionClass :: Info -> Class -> IO ActionLookupTable
 mkActionClass info (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
@@ -1044,6 +1086,14 @@ memorizedActionEntry (VarActionId c maybemid v vid, a) =
           Just _  -> return ()
   in (VarActionId c maybemid v vid, check a)
      
+memorizedActionEntry (PrimActionId m id, a) = 
+  let check action info context = do
+        maybemty <- getPrimtyping m id
+        case maybemty of
+          Nothing -> action info context
+          Just _  -> return ()
+  in (PrimActionId m id, check a)
+
 isCallable info c alloctable context =
   if isEmptyContext context then True
   else 
@@ -1542,7 +1592,21 @@ mkActionExpr (ConstChar s) = do
   return $ actionConst (TypeName "char")
 
 mkActionExpr (Prim n es) = do
-  return $ actionConst (TypeName "char")
+  actiones <- mapM mkActionExpr es
+  return $ actionprim actiones
+  where
+    actionprim :: [ActionExpr] -> ActionExpr
+    actionprim actiones typingenv typingctx info context = do
+      atyeffs <- mapM (\a -> a typingenv typingctx info context) actiones
+      actionConst (TypeName "boolean") typingenv typingctx info context -- TODO: Need to fix it!!!
+      -- if elem n ["==", "!="] == False
+      --   then actionprim' actiones
+      --   else actionprim'' actiones
+             
+    -- actionprim' actiones typingenv typingctx info context = do
+    --   atyeffs <- mapM (\a -> a typingenv typingctx info context) actiones
+    --   let (atyes,effes) = unzip atyeffs
+      
 
 actionConst ty typingenv typingctx info context = do
   aty <- mkAnnoType ty
