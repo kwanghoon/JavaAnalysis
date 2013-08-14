@@ -194,8 +194,8 @@ instance Show Expr where
     tabstop p . conc ["primStartActivity", "(", show x, ")"]
   showsPrec p (Prim "[]" _ [x,y]) = tabstop p . conc [show x, "[", show y, "]"]
   -- showsPrec p (Prim "[]=" [x,y]) = tabstop p . conc [show x, "=", show y]
-  showsPrec p (Prim "super" _ [x]) = 
-    tabstop p . conc ["super", "(", show x, ")"]
+  showsPrec p (Prim "super" _ es) = 
+    tabstop p . conc (["super", "("] ++ comma (map show es) ++ [")"])
   showsPrec p (Prim "<" _ [x,y]) = tabstop p . conc [show x, "<", show y]
   showsPrec p (Prim "++" _ [x,y]) = tabstop p . conc [show x, "++"]
   showsPrec p (Prim "--" _ [x,y]) = tabstop p . conc [show x, "--"]
@@ -302,7 +302,7 @@ numClass (Class attrs n pn ins mdecls) =
   where
     defaultConstr = 
       case [ length argdecls | (ConstrDecl _ _ argdecls _) <- mdecls ] of
-        [] -> [ConstrDecl n 0 [] NoStmt]
+        [] -> [ConstrDecl n 0 [] (Expr (Prim "super" [] []))]
         _  -> []
 numClass (Interface n ins mdecls) =  
   Interface n ins (numMdecls mdecls)

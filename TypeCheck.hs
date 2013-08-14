@@ -248,7 +248,8 @@ tcMdecl info (c,p,is) (MethodDecl attrs retty m id targs stmt) = do
   let env0 = if elem "static" attrs == False 
              then [("this", TypeName c)] else []
   let env  = env0 ++ [(x,ty) | (ty, x, _) <- targs]
-  (env1, stmt1) <- tcBeginStmt info ctx env retty stmt
+  (env1, stmt1) <- tcStmt info ctx env retty stmt
+  -- (env1, stmt1) <- tcBeginStmt info ctx env retty stmt
   if isJust (lookupEnv env1 "return") == False &&
      eqType retty (TypeName "void") == False &&
      c /= m   -- TODO: This is not enough!
@@ -546,11 +547,15 @@ tcBeginStmt info ctx env retty stmt =
   do let maybe = firstStmt stmt
      let (stmt1, therest) = fromJust maybe
      if isJust maybe == False || isSuperCall stmt1 == False
-     then tcStmt info ctx env retty stmt
+     then do insertSuper info ctx env retty stmt
      else do (env1,supercall1) <- tcSuperCall info ctx env stmt1
              if null therest 
              then return (env1, supercall1)
              else tcStmt info ctx env1 retty (head therest)
+
+insertSuper info ctx env retty stmt = do
+  (env1,stmt1) <- tcStmt info ctx env retty stmt
+  return (env1, Seq (Expr (Prim "super" [] [])) stmt1)
 
 tcSuperCall :: Info -> TypingCtx -> TypingEnv -> Stmt -> ErrorT TCError IO (TypingEnv, Stmt)
 tcSuperCall info ctx env (Expr (Prim "super" pargtys es)) =

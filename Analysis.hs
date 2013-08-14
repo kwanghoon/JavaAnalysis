@@ -1660,7 +1660,7 @@ mkActionExpr (Prim "super" tys es) = do
       let (atys,effs) = unzip atyeffs
       let (c, maybep, is, _) = typingctx
       pc <- (case maybep of
-                Nothing -> error $ "mkActionExpr: super: " ++ show es
+                Nothing -> return objClass 
                 Just pc -> return pc)
             
       pcty   <- mkAnnoType (TypeName pc)
