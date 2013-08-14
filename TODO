@@ -41,7 +41,8 @@
   - [Analysis] Can we drop AllocObjs? (AllocObjs vs. AllocLabelTable)
   - [Analysis] Drop WorkList. (DONE)
   - [Analysis] String analysis. The omega function. (DONE)
-  - [Analysis] Effect handling
+  - [Analysis] Effect handling (DONE)
+  - [Analysis] Supporting several effect analyses at the same time
   - [Analysis] Android analysis driver
 
 2. Analysis
