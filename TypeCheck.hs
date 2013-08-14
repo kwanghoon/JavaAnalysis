@@ -23,7 +23,8 @@ typecheck program =
 returnResult info (Left err) = do
   putStrLn err
   return Nothing
-returnResult info (Right program) = do  
+returnResult info (Right program) = do
+  putStrLn $ prprog $ program
   prTyInfo info
   putStrLn "Successfully typechecked..."
   putStrLn ""
@@ -546,6 +547,7 @@ tcBeginStmt :: Info -> TypingCtx -> TypingEnv -> TypeName -> Stmt
 tcBeginStmt info ctx env retty stmt = 
   do let maybe = firstStmt stmt
      let (stmt1, therest) = fromJust maybe
+     let TypeName cname = retty
      if isJust maybe == False || isSuperCall stmt1 == False
      then do insertSuper info ctx env retty stmt
      else do (env1,supercall1) <- tcSuperCall info ctx env stmt1

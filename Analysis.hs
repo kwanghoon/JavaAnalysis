@@ -9,17 +9,44 @@ import Control.Monad.Trans (liftIO)
 import Control.Monad.State 
 
 --
+data Option = 
+    NoOption  -- An analysis for plain Java programs
+  | Android   -- An analysis for Android programs
+
+--
 doAnalysis :: Program -> Info -> IO ()
 doAnalysis program info = do
+  let option      = NoOption :: Option
   let typingtable = [] :: TypingTable
   let constraints = [] :: Constraints
   let alloctable  = [] :: AllocLabelTable
   let allocobjs   = [] :: AllocObjs
   let uniqueid    = initialuniqueid  :: UniqueId    
   let state       = 
-        (constraints, typingtable, alloctable, allocobjs, uniqueid)
+        (option, constraints, typingtable, alloctable, allocobjs, uniqueid)
+        
+  let initContext = [] -- emptyContext
+  let initalloctable = []
+      
   actionlookuptable <- mkActionProgram info program
-  prActionLookupTable info [] actionlookuptable state
+  prActionLookupTable info initContext initalloctable actionlookuptable state
+  
+doAndroidAnalysis :: Program -> Info -> IO ()
+doAndroidAnalysis program info = do
+  let option      = Android :: Option
+  let typingtable = [] :: TypingTable
+  let constraints = [] :: Constraints
+  let alloctable  = [] :: AllocLabelTable
+  let allocobjs   = [] :: AllocObjs
+  let uniqueid    = initialuniqueid  :: UniqueId    
+  let state       = 
+        (option, constraints, typingtable, alloctable, allocobjs, uniqueid)
+        
+  let initContext = [1] -- emptyContext
+  let initalloctable = [(1,("Main","Main",1,0),TypeName "Main", None)]
+      
+  actionlookuptable <- mkActionProgram info program
+  prActionLookupTable info initContext initalloctable actionlookuptable state
 
 --
 type ObjAllocSite = UniqueId
@@ -147,7 +174,7 @@ instance Show Effect where
 
 noEffect = Eff (BaseEff [])
 
-type EffectOfInterest = MethodName
+type EffectOfInterest = Name -- ClassName for Android, MethodName for Java
 
 data BaseEffect = BaseEff [EffectOfInterest] | EffTop deriving (Eq, Ord)
 
@@ -190,7 +217,11 @@ data Constraint  =
     -- C_effect eff1 eff2               ===> eff1 <= eff2
   | C_effect Effect UniqueId
     
+    -- (S1,...,Sn) --eff--> T  <: (S1,...,Sn) --eff--> T 
   | C_mtype [AnnoType] Effect AnnoType [AnnoType] Effect AnnoType
+    
+    -- Intent{X}  ~~~> Y
+  | C_activation AnnoType UniqueId
 
 constraint_var_prefix = "x"
 effect_var_prefix = "e"
@@ -220,6 +251,8 @@ instance Show Constraint where
     conc [ show eff, " ", "<=", " ", show (EffVar id) ]
   showsPrec p (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) =
     conc [ showMethodtype atys1 eff1 aty1, " ", "<:", " ", showMethodtype atys2 eff2 aty2 ]
+  showsPrec p (C_activation aty id) = 
+    conc [ show aty, " ", "~~~>", " ", show (EffVar id) ]
     
 -- A very^k (k>=2) inefficient constraint solving method
 -- TODO: To replace this with union-find algorithm
@@ -267,7 +300,7 @@ solveOne (C_assign (AnnoArrayType aty1 x1) (AnnoArrayType aty2 x2)) sol =
 solveOne (C_effect eff1 effvar2) (cenv,eenv) =
   assignEff (getEff eenv eff1) effvar2 (cenv,eenv)
 solveOne (C_mtype atys1 (EffVar effvar1) aty1 atys2 (EffVar effvar2) aty2) sol = 
-  (\(cenv,eenv) -> assignEff (lookupEEnv eenv effvar1) effvar1 (cenv,eenv))
+  (\(cenv,eenv) -> assignEff (lookupEEnv eenv effvar1) effvar2 (cenv,eenv))
   $ solveEff effvar2
   $ solveEff effvar1
   $ solveOne (C_assign aty1 aty2)
@@ -283,6 +316,7 @@ solveOne (C_assignfield _ _ _)       sol = sol
 solveOne (C_assignstaticfield _ _ _) sol = sol
 solveOne (C_invoke _ _ _ _ _)        sol = sol
 solveOne (C_staticinvoke _ _ _ _ _)  sol = sol
+solveOne (C_activation _ _)          sol = sol
 solveOne c sol = error (show c)
 
 solveEff :: UniqueId -> Solution -> Solution
@@ -407,31 +441,23 @@ restrict tyenv dom = [ (x,ty) | (x,ty) <- tyenv, x `elem` dom ]
 getClassFromTypingCtx (c,_,_,_) = c
 getMethodFromTypingCtx (_,_,_,maybemid) = maybemid
 
--- WorkList
-type WorkList = [(ClassName,Context,MethodName,UniqueId)]
-
-isWorklistEmpty [] = True
-isWorklistEmpty _  = False
-
-nextFromWorklist l = (head l, tail l)
-
 -- A Table for Unique Allocation Labels
 type AllocLabelTable = [(UniqueId, AllocLabelLocation, TypeName, AllocObjInfo)]
--- type AllocLabelTable = [(UniqueId, AllocLabelLocation, ClassName, AllocObjInfo)]
+
 type AllocLabelLocation = (ClassName, MethodName, UniqueId, Label)
 
 type AllocObjs = [Context]
 
-data AllocObjInfo = None | Lit String | UnknownLit
+data AllocObjInfo = None | Lit String | UnknownLit deriving Eq
 
 --
 type AnalysisState = -- Can be extended if necessary
-  (Constraints, TypingTable, AllocLabelTable, AllocObjs, UniqueId)
+  (Option, Constraints, TypingTable, AllocLabelTable, AllocObjs, UniqueId)
 
 newId :: StateT AnalysisState IO UniqueId
 newId = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
-  put (constraints,typingtable,alloctable,allocobjs,uniqueid+1)
+  (option, constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (option, constraints,typingtable,alloctable,allocobjs,uniqueid+1)
   return uniqueid
   
 newIds :: [a] -> StateT AnalysisState IO [UniqueId]
@@ -441,40 +467,28 @@ newIds ls = mapM f ls
     
 newEffVar :: StateT AnalysisState IO Effect
 newEffVar = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
-  put (constraints,typingtable,alloctable,allocobjs,uniqueid+1)
+  (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (option,constraints,typingtable,alloctable,allocobjs,uniqueid+1)
   return (EffVar uniqueid)
 
--- getWorklist :: StateT AnalysisState IO WorkList
--- getWorklist = do
---   (worklist,_,_,_,_,_) <- get
---   return worklist
-  
--- putWorklist :: WorkList -> StateT AnalysisState IO ()
--- putWorklist worklist = do
---   (_,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
---   put (worklist,constraints,typingtable,alloctable,allocobjs,uniqueid)
-  
 getConstraints :: StateT AnalysisState IO Constraints
 getConstraints = do
-  (constraints,_,_,_,_) <- get
+  (_,constraints,_,_,_,_) <- get
   return constraints
   
 resetConstraints :: Constraints -> StateT AnalysisState IO ()
 resetConstraints constraints = do
-  (_,typingtable,alloctable,allocobjs,uniqueid) <- get
-  put (constraints,typingtable,alloctable,allocobjs,uniqueid)
+  (option,_,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (option,constraints,typingtable,alloctable,allocobjs,uniqueid)
 
 putConstraint :: Constraint -> StateT AnalysisState IO ()
 putConstraint constraint = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
-  put (constraint:constraints,typingtable,alloctable,allocobjs,uniqueid)
+  (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (option,constraint:constraints,typingtable,alloctable,allocobjs,uniqueid)
   
--- resolveConstraint c = do return [c]
--- {-                         
 resolveConstraint ::  Info -> Solution -> Constraint -> StateT AnalysisState IO [Constraint]
 resolveConstraint info (cenv,eenv) (C_assignfield aty1 aty2 f) = do
-  (constraints,typingtable,_,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let cid  = getAnno aty2
   let c    = case aty2 of { AnnoType c _ -> c; _ -> "" } -- TODO: something missing
   -- let cenv = solve constraints
@@ -493,7 +507,7 @@ resolveConstraint info (cenv,eenv) (C_assignfield aty1 aty2 f) = do
   return $ {- [ C_assignfield aty1 aty2 f ] ++ -} [ C_assign aty1 aty | aty <- atys ]
   
 resolveConstraint info (cenv,eenv) (C_assignstaticfield aty1 ty2 f) = do
-  (constraints,typingtable,_,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let c    = case ty2 of { TypeName c -> c; _ -> "" } -- TODO: something missing
   -- let cenv = solve constraints
   let Set ctxs = Set [emptyContext]
@@ -511,7 +525,7 @@ resolveConstraint info (cenv,eenv) (C_assignstaticfield aty1 ty2 f) = do
   return $ {- [ C_assignstaticfield aty1 ty2 f ] ++ -} [ C_assign aty1 aty | aty <- atys ]
 
 resolveConstraint info (cenv,eenv) (C_field aty1 f aty2) = do
-  (constraints,typingtable,_,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let cid  = getAnno aty1
   let c    = case aty1 of { AnnoType c _ -> c; _ -> "" } -- TODO: something missing
   -- let cenv = solve constraints
@@ -530,7 +544,7 @@ resolveConstraint info (cenv,eenv) (C_field aty1 f aty2) = do
   return $ {- [ C_field aty1 f aty2 ] ++ -} [ C_assign aty aty2 | aty <- atys ]
   
 resolveConstraint info (cenv,eenv) (C_staticfield ty1 f aty2) = do
-  (constraints,typingtable,_,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let c    = case ty1 of { TypeName c -> c; _ -> "" } -- TODO: something missing
   -- let cenv = solve constraints
   let Set ctxs = Set [emptyContext]
@@ -548,7 +562,7 @@ resolveConstraint info (cenv,eenv) (C_staticfield ty1 f aty2) = do
   return $ {- [ C_staticfield ty1 f aty2 ] ++ -} [ C_assign aty aty2 | aty <- atys ]
 
 resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
-  (constraints,typingtable,_,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let cid = getAnno cty
   let c   = case cty of { AnnoType c _ -> c; _ -> "" }
   -- let cenv = solve constraints
@@ -571,8 +585,8 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
           , let bare_atys  = map toType atys 
           , let bare_matys = map toType matys
           , let bare_maty  = toType maty
-          , subType info (TypeName c') (TypeName c)
-            && m==m' 
+          , -- subType info (TypeName c') (TypeName c)  -- TODO: why?
+            m==m' 
             && subTypes info bare_atys bare_matys
           ]
           
@@ -590,7 +604,7 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
     [ C_mtype matys meff maty atys eff aty | (_, _, (matys, maty, meff)) <- mtypes ]
     
 resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
-  (constraints,typingtable,_,_,_) <- get
+  (_,constraints,typingtable,_,_,_) <- get
   let c   = case ty of { TypeName c -> c; _ -> "" }
   -- let cenv = solve constraints
   let Set ctxs = Set [emptyContext]
@@ -610,8 +624,8 @@ resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
           , let bare_atys  = map toType atys
           , let bare_matys = map toType matys
           , let bare_maty  = toType maty
-          , subType info (TypeName c') (TypeName c)
-            && m==m' 
+          , -- subType info (TypeName c') (TypeName c)  -- TODO: why?
+            m==m' 
             && subTypes info bare_atys bare_matys
           ]
         | context <- ctxs ]
@@ -627,24 +641,65 @@ resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
     [ C_mtype matys meff maty atys eff aty | (_,_,(matys, maty, meff)) <- mtypes ]
 
-    
--- -}
+resolveConstraint info (cenv,eenv) (C_activation aty effid) = do
+  (_,constraints,typingtable,alloctable,_,_) <- get
+  let cid = getAnno aty
+  let c   = case aty of { AnnoType c _ -> c; } -- aty = Intent{Xi}
+      
+  let Set ctxs = lookupCEnv cenv cid
+  let atys = [ aty' | F c' context' f' id' aty' <- typingtable
+                    , context <- ctxs
+                    , subType info (TypeName c') (TypeName c) {- c==c' -} 
+                      && context==context' 
+                      && f'=="target" ]  -- Android specific
   
+  let strCtxs = concat [ ctxs | aty <- atys
+                              , let x = getAnno aty
+                              , let Set ctxs = lookupCEnv cenv x ]
+              
+  let objinfos = 
+        [ objinfo 
+        | ctx <- strCtxs, (id,_,_,objinfo) <- alloctable
+        , isEmptyContext ctx == False && head (reverse ctx) == id ]
+        
+  let activatedClasses = [ c | Lit c <- objinfos ]
+  let haveTop          = UnknownLit `elem` objinfos
+        
+  liftIO $ putStrLn $ ("May activate " ++ concat (comma activatedClasses))
+  
+  let effect = Eff $ if haveTop then EffTop else BaseEff activatedClasses
+  return [ C_effect effect effid ]
+               
+
 resolveConstraint info (cenv,eenv) c = return []
   
+isAndroid :: StateT AnalysisState IO Bool
+isAndroid = do
+  (option,_,_,_,_,_) <- get
+  case option of
+    Android  -> return True
+    NoOption -> return False
+    
+isJava :: StateT AnalysisState IO Bool
+isJava = do
+  (option,_,_,_,_,_) <- get
+  case option of
+    Android  -> return False
+    NoOption -> return True
+
 getTyping :: StateT AnalysisState IO TypingTable
 getTyping = do
-  (_,typing,_,_,_) <- get
+  (_,_,typing,_,_,_) <- get
   return typing
   
 putTyping :: TableEntry -> StateT AnalysisState IO ()
 putTyping typing = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
-  put (constraints,typing:typingtable,alloctable,allocobjs,uniqueid)
+  (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  put (option,constraints,typing:typingtable,alloctable,allocobjs,uniqueid)
                               
 getFieldtyping :: ClassName -> Context -> FieldName -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
 getFieldtyping c ctx f id = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
   retMaybeAnnotype $ lookupFieldTyping typingtable c ctx f id
   
   where
@@ -659,7 +714,7 @@ getFieldtyping c ctx f id = do
 getMethodtyping :: ClassName -> Context -> MethodName -> UniqueId 
                    -> StateT AnalysisState IO (Maybe AnnoMethodType)
 getMethodtyping c ctx m id = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
   retMaybeAnnomtype $ lookupMethodTyping typingtable c ctx m id
   
   where
@@ -673,7 +728,7 @@ getMethodtyping c ctx m id = do
 getPrimtyping :: MethodName -> UniqueId 
                    -> StateT AnalysisState IO (Maybe AnnoMethodType)
 getPrimtyping m id = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
   retMaybeAnnomtype $ lookupPrimTyping typingtable m id
   
   where
@@ -687,7 +742,7 @@ getPrimtyping m id = do
 getVartyping :: ClassName -> Context -> Maybe (MethodName,UniqueId) -> VarName 
                 -> UniqueId -> StateT AnalysisState IO (Maybe AnnoType)
 getVartyping c ctx maybemid v vid = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
   retMaybeAnnovtype $ lookupVarTyping typingtable c ctx maybemid v vid
   
   where
@@ -737,13 +792,13 @@ registerAllocTableEntry entry newc objinfo = do
   
 getAllocLabelTable :: StateT AnalysisState IO AllocLabelTable
 getAllocLabelTable = do
-  (_,_,alloctable,_,_) <- get
+  (_,_,_,alloctable,_,_) <- get
   return alloctable
   
 putAllocLabelTable :: AllocLabelTable -> StateT AnalysisState IO ()  
 putAllocLabelTable alloctable = do
-  (constraints,typingtable,_,allocobjs,uniqueid) <- get
-  put (constraints,typingtable,alloctable,allocobjs,uniqueid)
+  (option,constraints,typingtable,_,allocobjs,uniqueid) <- get
+  put (option,constraints,typingtable,alloctable,allocobjs,uniqueid)
 
 prAllocLabelTable :: AllocLabelTable -> IO ()  
 prAllocLabelTable alloctable = do
@@ -761,15 +816,15 @@ showObjInfo UnknownLit = "T"
       
 getAllocObjs :: StateT AnalysisState IO AllocObjs
 getAllocObjs = do
-  (_,_,_,allocobjs,_) <- get
+  (_,_,_,_,allocobjs,_) <- get
   return allocobjs
 
 putAllocObj :: Context -> StateT AnalysisState IO ()
 putAllocObj allocobj = do
-  (constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
+  (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
   let allocobjs' = if allocobj `elem` allocobjs then allocobjs
                    else allocobj:allocobjs
-  put (constraints,typingtable,alloctable,allocobjs',uniqueid)
+  put (option,constraints,typingtable,alloctable,allocobjs',uniqueid)
 
 prAllocObjs :: AllocObjs -> IO ()
 prAllocObjs allocobjs = do
@@ -836,21 +891,32 @@ lookupPrimTyping typingtable m id =
   , m==mi && idi==id ]
 
 --
-prActionLookupTable :: Info -> Context -> ActionLookupTable -> AnalysisState -> IO ()
-prActionLookupTable info context actionlookuptable initstate = do
+prActionLookupTable :: Info -> Context -> AllocLabelTable -> ActionLookupTable -> AnalysisState -> IO ()
+prActionLookupTable info context initalloctable actionlookuptable initstate = do
   putStrLn $ "Constraints: starting with the context " ++ showContext context
-  (_,state) <- runStateT (repRun info context actionlookuptable) initstate
+  (_,state) <- 
+    runStateT (repRun info context initalloctable actionlookuptable) initstate
   -- (_,state) <- runStateT (runAllActions info context actionlookuptable) initstate
-  let (_,typingtable,alloctable,allocobjs,_) = state
+  let (_,_,typingtable,alloctable,allocobjs,_) = state
   prTypingTable typingtable
   putStrLn ""
   prAllocLabelTable alloctable
   putStrLn ""
   -- prAllocObjs allocobjs
   -- putStrLn ""
+  
 
-repRun :: Info -> Context -> ActionLookupTable -> StateT AnalysisState IO ()
-repRun info context actionlookuptable = do
+-- If the initial context is not empty  
+-- then an appropriate set of objects must be declared according to
+-- the objects referenced in the initial context!
+prepareContext :: AllocLabelTable -> StateT AnalysisState IO ()  
+prepareContext alloctbl = do
+  (option,c,t,a,o,i) <- get
+  put (option,c,t,alloctbl ++ a,o,i)
+
+repRun :: Info -> Context -> AllocLabelTable -> ActionLookupTable -> StateT AnalysisState IO ()
+repRun info context initalloctable actionlookuptable = do
+  prepareContext initalloctable 
   runAllActions info context actionlookuptable
   alloctable <- getAllocLabelTable
   allocobjs   <- getAllocObjs
@@ -1038,14 +1104,6 @@ mkActionProgram info program = do
   actionmethodss <- mapM (mkActionClass info) program
   return $ concat $ actionmethodss
     
--- mkActionPrim :: Info -> IO ActionLookupTable
--- mkActionPrim info = do
---   return $ actionprim
---   where
---     actionprim :: ActionLookupTable
---     actionprim = do
-      
-
 mkActionClass :: Info -> Class -> IO ActionLookupTable
 mkActionClass info (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
@@ -1473,7 +1531,8 @@ mkActionExpr (New c es label) = do
             case c of 
               TypeName cname   -> cname
               ArrayTypeName ty -> show ty  -- as a constructor name of the array
-      let effconstr = Eff (BaseEff [cname])
+      cond <- isJava
+      let effconstr = Eff $ BaseEff $ if cond then [cname] else []
       return (cty, EffUnion eff effconstr)
       
     addInvokeConstraint c@(TypeName cn) cid cty atys eff = do
@@ -1581,9 +1640,10 @@ mkActionExpr (Invoke e m es maybety) = do
       putConstraint (C_invoke atye m atyes effm aty)
       
       -- Effect Test
-      let effmivk = Eff (BaseEff [m])
+      cond <- isJava
+      let effmivk = Eff $ BaseEff $ if cond then [m] else []
       
-      return (aty, EffUnion eff effmivk)
+      return (aty, EffUnion (EffUnion eff effmivk) effm)
       
 mkActionExpr (StaticInvoke c m es maybety) = do      
   actionexps <- mapM mkActionExpr es
@@ -1607,9 +1667,10 @@ mkActionExpr (StaticInvoke c m es maybety) = do
       putConstraint (C_staticinvoke c m atyes effm aty)
       
       -- Effect Test
-      let effmivk = Eff (BaseEff [m])
+      cond <- isJava
+      let effmivk = Eff $ BaseEff $ if cond then [m] else []
 
-      return (aty, EffUnion eff effmivk)
+      return (aty, EffUnion (EffUnion eff effmivk) effm)
       
 mkActionExpr (ConstTrue) = do
   return $ actionConst (TypeName "boolean")
@@ -1671,7 +1732,9 @@ mkActionExpr (Prim "super" tys es) = do
       
       -- Effect Test
       let eff     = foldr EffUnion effVar effs
-      let effmivk = Eff (BaseEff [pc])
+          
+      cond <- isJava
+      let effmivk = Eff $ BaseEff $ if cond then [pc] else []
       return (pcty, EffUnion eff effmivk)
 
 mkActionExpr (Prim n tys es) = do
@@ -1689,11 +1752,30 @@ mkActionExpr (Prim n tys es) = do
       let (atyes,effes) = unzip atyeffs
       let rettys = lookupPrim n tys
       retty <- (case rettys of
-                   []      -> error $ "mkActionExpr: no such primitive " ++ n ++ " " ++ show tys
+                   []      -> error ("mkActionExpr: no such primitive " ++ 
+                                     n ++ " " ++ show tys)
                    [retty] -> return retty
-                   _       -> error $ "mkActionExpr: multiple primitives " ++ n ++ " " ++ show tys)
+                   _       -> error ("mkActionExpr: multiple primitives " ++ 
+                                     n ++ " " ++ show tys))
+               
+      -- For Android: 
+      effVar <- newEffVar
+      let EffVar effVarId = effVar
+      
+      _ <- if n /= "primStartActivity" then return () 
+           else do
+                let id = head (reverse context)
+                let aintentty = head atyes
+                putConstraint (C_activation aintentty effVarId)
+
+      -- Effect Test
+      let eff = foldr EffUnion noEffect effes
+          
+      cond <- isAndroid
+      let eff_android = if cond then effVar else noEffect
+        
       aty <- mkAnnoType retty
-      return (aty, noEffect)
+      return (aty, EffUnion eff eff_android)
           
     actionprim'' actiones atyeffs typingenv typingctx info context = do 
       aty <- mkAnnoType (TypeName "boolean")
@@ -1702,8 +1784,6 @@ mkActionExpr (Prim n tys es) = do
 actionConst ty typingenv typingctx info context = do
   aty <- mkAnnoType ty
   return (aty, noEffect)
-
-      
 
 --      
 mkCast :: TypeName -> AnnoType -> AnnoType

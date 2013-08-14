@@ -11,14 +11,15 @@ import System.CPUTime
 
 main =
   do args <- getArgs
-     run args
+     run doAnalysis args
      
-run args = do 
+run :: (Program -> Info -> IO ()) -> [FilePath] -> IO ()
+run doAnalysis args = do 
   startTime <- getCPUTime
   
   css <- mapM parse args
   let cs = numProgram $ concat $ css
-  putStrLn $ prprog $ cs
+  -- putStrLn $ prprog $ cs
   maybeinfoprog <- typecheck cs
   let (info,program) = fromJust maybeinfoprog
   if isNothing maybeinfoprog
@@ -29,6 +30,12 @@ run args = do
   prElapsedSeconds startTime endTime
   putStrLn "done."
           
+dotest filelist = 
+  do run doAnalysis filelist
+     
+doandroidtest filelist = 
+  do run doAndroidAnalysis filelist
+
 prElapsedSeconds s e = do
   let elapsedtime = e - s
   let timeinfloat = read (show elapsedtime) :: Float
@@ -48,9 +55,6 @@ toks arg =
      return (lexer $ s)
   
 
-dotest filelist = 
-  do run filelist
-     
 tc_android = map ("./sample/androidgame/" ++)
              [ 
                "Android.java",

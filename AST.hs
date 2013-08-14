@@ -7,7 +7,7 @@ type UniqueId     = Integer
 type Label        = Integer
 
 uniqueidforstatic = 1
-initialuniqueid   = uniqueidforstatic+1
+initialuniqueid   = uniqueidforstatic+100
 
 --
 static         = "static"
