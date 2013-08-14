@@ -22,7 +22,7 @@ class Y {
 }
 
 class Main {
-    void main(String[] args) {
+    public static void main(String[] args) {
 	Container c1 = new Container (100);
 	Container c2 = new Container (200);
 

@@ -416,8 +416,8 @@ isWorklistEmpty _  = False
 nextFromWorklist l = (head l, tail l)
 
 -- A Table for Unique Allocation Labels
-type AllocLabelTable = [(UniqueId, AllocLabelLocation, ClassName, AllocObjInfo)]
--- type AllocLabelLocation = (ClassName, Context, MethodName, UniqueId, Label)
+type AllocLabelTable = [(UniqueId, AllocLabelLocation, TypeName, AllocObjInfo)]
+-- type AllocLabelTable = [(UniqueId, AllocLabelLocation, ClassName, AllocObjInfo)]
 type AllocLabelLocation = (ClassName, MethodName, UniqueId, Label)
 
 type AllocObjs = [Context]
@@ -703,24 +703,24 @@ getArgVartyping c ctx m id argdecls = do
   where
     g (ty,argv,argid) = getVartyping c ctx (Just (m,id)) argv argid
                                
-lookupAllocTableEntry :: AllocLabelLocation -> StateT AnalysisState IO (Maybe ClassName)
-lookupAllocTableEntry  entry = do
-  (_,_,alloctable,_,_) <- get
-  case [ newc' | (id',entry',newc',objinfo') <- alloctable, entry==entry' ] of
-    []    -> return $ Nothing
-    (h:_) -> return $ Just h
+-- lookupAllocTableEntry :: AllocLabelLocation -> StateT AnalysisState IO (Maybe ClassName)
+-- lookupAllocTableEntry  entry = do
+--   (_,_,alloctable,_,_) <- get
+--   case [ newc' | (id',entry',newc',objinfo') <- alloctable, entry==entry' ] of
+--     []    -> return $ Nothing
+--     (h:_) -> return $ Just h
 
-putAllocTableEntry :: Context -> AllocLabelLocation -> ClassName -> AllocObjInfo -> StateT AnalysisState IO Context
+putAllocTableEntry :: Context -> AllocLabelLocation -> TypeName -> AllocObjInfo -> StateT AnalysisState IO Context
 putAllocTableEntry context entry@(cname,m,mid,label) newc allocobjinfo = do
   alloctable <- registerAllocTableEntry entry newc allocobjinfo
   let f allocsiteid = 
-        head [ entry | (allocsiteid', entry, newc, _) <- alloctable
+        head [ entry | (allocsiteid', entry, _, _) <- alloctable
                       , allocsiteid==allocsiteid' ]
   let entrys = map f context
   -- let newentrys = reverse $ take length_k $ reverse $ entrys ++ [entry]
   let newentrys = addEntry length_k entrys entry
   let g entry = 
-        head [ allocsiteid | (allocsiteid,entry',newc, _) <- alloctable
+        head [ allocsiteid | (allocsiteid,entry',_, _) <- alloctable
                            , entry==entry' ]
   let newContext = map g newentrys
   putAllocLabelTable alloctable
@@ -753,7 +753,7 @@ prAllocLabelTable alloctable = do
     pr (id, (c,m,mid,label), newc, objinfo) = 
       putStrLn $ " - " ++ obj_alloc_site_prefix ++ show id ++ " : " ++ 
       "(" ++ c ++","++ m ++ "," ++ show mid ++ "," ++ show label ++ ")" ++
-      " " ++ "new" ++ " " ++ newc ++ " " ++ showObjInfo objinfo
+      " " ++ "new" ++ " " ++ show newc ++ " " ++ showObjInfo objinfo
       
 showObjInfo None       = ""
 showObjInfo (Lit s)    = show s
@@ -1142,9 +1142,9 @@ memorizedActionEntry (PrimActionId m id, a) =
 isCallable info c alloctable context =
   if isEmptyContext context then True
   else 
-    let objc = head [ newc | (id,_,newc,_) <- alloctable
+    let newc = head [ newc | (id,_,newc,_) <- alloctable
                            , id==head (reverse context) ]
-    in subType info (TypeName objc) (TypeName c)
+    in subType info newc (TypeName c)
        
 mkCompatibleClass :: ClassName -> ActionMember -> IO ActionMember
 mkCompatibleClass n action = 
@@ -1461,14 +1461,18 @@ mkActionExpr (New c es label) = do
       let (cname,m,id) = 
             case typingctx of
               (cname,_,_,Just (m,id)) -> (cname, m, id)
+              _                       -> error "mkActionExpr: New: unexpected typingctx"
               -- (cname,_,_,Nothing)     -> (cname, "*", 100)
-      let (TypeName newc) = c    -- TODO: Fix it since c can be an array type! 
-      uniqueContext <- putAllocTableEntry context (cname, m, id, label) newc None
+              
+      uniqueContext <- putAllocTableEntry context (cname, m, id, label) c None
       putConstraint (C_lower (Set [uniqueContext]) cid)
       addInvokeConstraint c cid cty atys effVar
       
       -- Effect Test
-      let TypeName cname = c
+      let cname = 
+            case c of 
+              TypeName cname   -> cname
+              ArrayTypeName ty -> show ty  -- as a constructor name of the array
       let effconstr = Eff (BaseEff [cname])
       return (cty, EffUnion eff effconstr)
       
@@ -1628,7 +1632,7 @@ mkActionExpr (ConstLit s label) = do
       let id = getAnno aty
       let entry = (strClass, "lit_"++s, 0, label) --
       uniqueContext <-
-        putAllocTableEntry context entry strClass (Lit s)
+        putAllocTableEntry context entry (TypeName strClass) (Lit s)
       putConstraint (C_lower (Set [uniqueContext]) id)
       return (aty, noEffect)
       

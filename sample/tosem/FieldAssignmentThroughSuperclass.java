@@ -39,7 +39,7 @@ class C extends A {
 }
 
 class Main {
-    void main(String[] args) {
+    public static void main(String[] args) {
 	Y y = new Y();
 	Z z = new Z();
 	B b = new B(y);
