@@ -895,7 +895,7 @@ prActionLookupTable :: Info -> Context -> AllocLabelTable -> ActionLookupTable -
 prActionLookupTable info context initalloctable actionlookuptable initstate = do
   putStrLn $ "Constraints: starting with the context " ++ showContext context
   (_,state) <- 
-    runStateT (repRun info context initalloctable actionlookuptable) initstate
+    runStateT (runAnalysis info context initalloctable actionlookuptable) initstate
   -- (_,state) <- runStateT (runAllActions info context actionlookuptable) initstate
   let (_,_,typingtable,alloctable,allocobjs,_) = state
   prTypingTable typingtable
@@ -914,26 +914,47 @@ prepareContext alloctbl = do
   (option,c,t,a,o,i) <- get
   put (option,c,t,alloctbl ++ a,o,i)
 
-repRun :: Info -> Context -> AllocLabelTable -> ActionLookupTable -> StateT AnalysisState IO ()
-repRun info context initalloctable actionlookuptable = do
+runAnalysis :: Info -> Context -> AllocLabelTable -> ActionLookupTable -> StateT AnalysisState IO ()
+runAnalysis info context initalloctable actionlookuptable = do
+  -- 1. Initialization
   prepareContext initalloctable 
   runAllActions info context actionlookuptable
   alloctable <- getAllocLabelTable
   allocobjs   <- getAllocObjs
   -- liftIO $ prAllocLabelTable alloctable
   -- liftIO $ prAllocObjs allocobjs
-  n <- repRun' 1 info actionlookuptable
+  
+  -- 2. Do the rest of the iterative anaylsis
+  repRunAnalysis info context actionlookuptable
+  
+repRunAnalysis info context actionlookuptable = do
+  -- 2.1. Generation of allocated objects
+  n <- generateObjects 1 info actionlookuptable
+  
+  -- 2.2. Constraints solving with the generated objects
   constraints <- getConstraints
   -- liftIO $ putStrLn $ ""
   -- liftIO $ putStrLn $ "Constraints:"
   -- liftIO $ mapM_ prConstraint $ reverse $ constraints
   liftIO $ putStrLn $ "[" ++ show n ++ " " ++ "iterations" ++ "]"
   liftIO $ putStrLn $ ""
+  
+  allocobjs1 <- getAllocObjs
   solveAllConstraints info
+  
+  -- 2.3. Repeate the analysis if new objects are generated
+  allocobjs2 <- getAllocObjs
+  
+  -- liftIO $ prAllocLabelTable alloctable
+  -- liftIO $ prAllocObjs allocobjs2
+  
+  if length allocobjs1 == length allocobjs2 then return ()
+    else repRunAnalysis info context actionlookuptable
 
-repRun' :: Int -> Info -> ActionLookupTable -> StateT AnalysisState IO Int
-repRun' n info actionlookuptable = do
-  -- liftIO $ putStrLn $ "repRun: " ++ show n
+--
+generateObjects :: Int -> Info -> ActionLookupTable -> StateT AnalysisState IO Int
+generateObjects n info actionlookuptable = do
+  -- liftIO $ putStrLn $ "generateObjects: " ++ show n
   allocobjs1 <- getAllocObjs
   runForAllContext info actionlookuptable allocobjs1
   alloctable <- getAllocLabelTable
@@ -941,7 +962,7 @@ repRun' n info actionlookuptable = do
   -- liftIO $ prAllocLabelTable alloctable
   -- liftIO $ prAllocObjs allocobjs2
   if length allocobjs1 == length allocobjs2 then return n
-    else repRun' (n+1) info actionlookuptable
+    else generateObjects (n+1) info actionlookuptable
          
 runForAllContext info actionlookuptable = foldr f (return ())
   where
@@ -975,6 +996,7 @@ runOneEntry info context entry m = do
 --       prActionLookupTableEntry info context entry
 --       m
   
+--
 solveAllConstraints :: Info -> StateT AnalysisState IO ()
 solveAllConstraints info = do
   constraints   <- getConstraints
@@ -989,18 +1011,6 @@ solveAllConstraints info = do
   liftIO $ putStrLn $ "Solving Constraints [" ++ show n ++ " iterations]"
   liftIO $ prSolution $ solution
   liftIO $ putStrLn $ ""
-
-prSolution (cenv, eenv) = do
-  mapM_ prCenv (sort cenv)
-  liftIO $ putStrLn $ ""
-  mapM_ prEenv (sort eenv)
-
-prCenv (id, Set set) = 
-  putStrLn $ " - " ++ constraint_var_prefix ++ show id ++ " = " ++ 
-  "{ " ++ concat (intersperse "," (map showContext set)) ++ " }"
-
-prEenv (id, eff) = 
-  putStrLn $ " - " ++ effect_var_prefix ++ show id ++ " = " ++ show eff
 
 solveAllConstraints' :: Info -> Int -> Solution -> StateT AnalysisState IO (Int, Solution)
 solveAllConstraints' info n solution1 = do
@@ -1021,6 +1031,18 @@ solveAllConstraints' info n solution1 = do
     then return (n, solution1)
     else do resetConstraints newconstraints; solveAllConstraints' info (n+1) solution2
 
+--
+prSolution (cenv, eenv) = do
+  mapM_ prCenv (sort cenv)
+  liftIO $ putStrLn $ ""
+  mapM_ prEenv (sort eenv)
+
+prCenv (id, Set set) = 
+  putStrLn $ " - " ++ constraint_var_prefix ++ show id ++ " = " ++ 
+  "{ " ++ concat (intersperse "," (map showContext set)) ++ " }"
+
+prEenv (id, eff) = 
+  putStrLn $ " - " ++ effect_var_prefix ++ show id ++ " = " ++ show eff
 
 prActionLookupTableEntry info context (MethodActionId c m id, actionmethod) = do
   constraints0 <- getConstraints
@@ -1758,6 +1780,9 @@ mkActionExpr (Prim n tys es) = do
                    _       -> error ("mkActionExpr: multiple primitives " ++ 
                                      n ++ " " ++ show tys))
                
+      -- Effect Test
+      let eff = foldr EffUnion noEffect effes
+          
       -- For Android: 
       effVar <- newEffVar
       let EffVar effVarId = effVar
@@ -1768,12 +1793,10 @@ mkActionExpr (Prim n tys es) = do
                 let aintentty = head atyes
                 putConstraint (C_activation aintentty effVarId)
 
-      -- Effect Test
-      let eff = foldr EffUnion noEffect effes
-          
       cond <- isAndroid
       let eff_android = if cond then effVar else noEffect
         
+      -- 
       aty <- mkAnnoType retty
       return (aty, EffUnion eff eff_android)
           
