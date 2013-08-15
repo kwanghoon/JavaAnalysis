@@ -16,8 +16,8 @@ java_class     = "class"
 java_interface = "interface"
 
 -- For typechecking
-type UserClasses = [(Name, [Attrib])]
-type Inheritance = [(Name,Name)]
+type UserClasses = [(ClassName, [Attrib])]
+type Inheritance = [(ClassName,ClassName)] -- (C,D) means C<:D.
 type Fields      = [(ClassName, [(TypeName, FieldName, [Attrib])])]
 type Mtypes      = [(ClassName, MethodName, UniqueId, [TypeName], TypeName, [Attrib], [VarName], Maybe Stmt)]
 type Vtypes      = [(ClassName, Maybe (MethodName, UniqueId), VarName, UniqueId, TypeName)]
@@ -110,7 +110,7 @@ data Expr =
   | ConstNum String
   | ConstLit String Label
   | ConstChar String
-  | Prim Name [TypeName] [Expr] -- for argument types
+  | Prim Name [TypeName] [Expr] Label -- for argument types and for allocated location
             
 data Stmt = 
     Expr Expr
@@ -186,19 +186,19 @@ instance Show Expr where
   showsPrec p (ConstNum n) = conc [n]
   showsPrec p (ConstLit s label) = conc ["\"", s, "\""] . allocLabel p label
   showsPrec p (ConstChar s) = conc ["\'", s, "\'"]
-  showsPrec p (Prim "==" _ [x,y]) = conc [show x, "==", show y]
-  showsPrec p (Prim "!=" _ [x,y]) = tabstop p . conc [show x, "!=", show y]
-  showsPrec p (Prim "primAddButton" _ [x]) = 
+  showsPrec p (Prim "==" _ [x,y] _) = conc [show x, "==", show y]
+  showsPrec p (Prim "!=" _ [x,y] _) = tabstop p . conc [show x, "!=", show y]
+  showsPrec p (Prim "primAddButton" _ [x] _) = 
     tabstop p . conc ["primAddButton", "(", show x, ")"]
-  showsPrec p (Prim "primStartActivity" _ [x]) = 
+  showsPrec p (Prim "primStartActivity" _ [x] _) = 
     tabstop p . conc ["primStartActivity", "(", show x, ")"]
-  showsPrec p (Prim "[]" _ [x,y]) = tabstop p . conc [show x, "[", show y, "]"]
+  showsPrec p (Prim "[]" _ [x,y] _) = tabstop p . conc [show x, "[", show y, "]"]
   -- showsPrec p (Prim "[]=" [x,y]) = tabstop p . conc [show x, "=", show y]
-  showsPrec p (Prim "super" _ es) = 
+  showsPrec p (Prim "super" _ es _) = 
     tabstop p . conc (["super", "("] ++ comma (map show es) ++ [")"])
-  showsPrec p (Prim "<" _ [x,y]) = tabstop p . conc [show x, "<", show y]
-  showsPrec p (Prim "++" _ [x,y]) = tabstop p . conc [show x, "++"]
-  showsPrec p (Prim "--" _ [x,y]) = tabstop p . conc [show x, "--"]
+  showsPrec p (Prim "<" _ [x,y] _) = tabstop p . conc [show x, "<", show y]
+  showsPrec p (Prim "++" _ [x,y] _) = tabstop p . conc [show x, "++"]
+  showsPrec p (Prim "--" _ [x,y] _) = tabstop p . conc [show x, "--"]
   
 instance Show Stmt where  
   showsPrec p (Expr e) = tabstop p . conc [ show e, ";", "\n"]
@@ -302,7 +302,7 @@ numClass (Class attrs n pn ins mdecls) =
   where
     defaultConstr = 
       case [ length argdecls | (ConstrDecl _ _ argdecls _) <- mdecls ] of
-        [] -> [ConstrDecl n 0 [] (Expr (Prim "super" [] []))]
+        [] -> [ConstrDecl n 0 [] (Expr (Prim "super" [] [] 0))]
         _  -> []
 numClass (Interface n ins mdecls) =  
   Interface n ins (numMdecls mdecls)
@@ -408,9 +408,9 @@ numExpr (ConstNull) o = (ConstNull, o)
 numExpr (ConstNum s) o = (ConstNum s, o)
 numExpr (ConstLit s _) o = (ConstLit s o, o+1)
 numExpr (ConstChar s) o = (ConstChar s, o)
-numExpr (Prim n tys es) o = (Prim n tys es', o')
+numExpr (Prim n tys es _) o = (Prim n tys es' o, o')
   where
-    (es',o') = numExprs es o
+    (es',o') = numExprs es (o+1)
 
 numExprs [] o = ([], o)
 numExprs (e:es) o = (e':es', o'')

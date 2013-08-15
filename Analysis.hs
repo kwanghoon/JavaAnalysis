@@ -43,7 +43,7 @@ doAndroidAnalysis program info = do
         (option, constraints, typingtable, alloctable, allocobjs, uniqueid)
         
   let initContext = [1] -- emptyContext
-  let initalloctable = [(1,("Main","Main",1,0),TypeName "Main", None)]
+  let initalloctable = [(1,("Main","Main",1,0, NoRefinement),TypeName "Main", None)] -- TODO: NoRefinement?
       
   actionlookuptable <- mkActionProgram info program
   prActionLookupTable info initContext initalloctable actionlookuptable state
@@ -220,8 +220,8 @@ data Constraint  =
     -- (S1,...,Sn) --eff--> T  <: (S1,...,Sn) --eff--> T 
   | C_mtype [AnnoType] Effect AnnoType [AnnoType] Effect AnnoType
     
-    -- Intent{X}  ~~~> Y
-  | C_activation AnnoType UniqueId
+    -- Intent{X} @ ctx.label ~~~> eff
+  | C_activation AnnoType Context AllocLabelLocation UniqueId
 
 constraint_var_prefix = "x"
 effect_var_prefix = "e"
@@ -251,8 +251,10 @@ instance Show Constraint where
     conc [ show eff, " ", "<=", " ", show (EffVar id) ]
   showsPrec p (C_mtype atys1 eff1 aty1 atys2 eff2 aty2) =
     conc [ showMethodtype atys1 eff1 aty1, " ", "<:", " ", showMethodtype atys2 eff2 aty2 ]
-  showsPrec p (C_activation aty id) = 
-    conc [ show aty, " ", "~~~>", " ", show (EffVar id) ]
+  showsPrec p (C_activation aty context (c,m,mid,label,refmnt) id) = 
+    conc [ show aty, " ", "~~~>", " ", show (EffVar id), " @ ",
+           "[",  "{", showContext context, "}", ",", c, 
+           m, ",", show mid, ",", show label, ", ", show refmnt, "]" ]
     
 -- A very^k (k>=2) inefficient constraint solving method
 -- TODO: To replace this with union-find algorithm
@@ -316,7 +318,7 @@ solveOne (C_assignfield _ _ _)       sol = sol
 solveOne (C_assignstaticfield _ _ _) sol = sol
 solveOne (C_invoke _ _ _ _ _)        sol = sol
 solveOne (C_staticinvoke _ _ _ _ _)  sol = sol
-solveOne (C_activation _ _)          sol = sol
+solveOne (C_activation _ _ _ _)      sol = sol
 solveOne c sol = error (show c)
 
 solveEff :: UniqueId -> Solution -> Solution
@@ -444,11 +446,32 @@ getMethodFromTypingCtx (_,_,_,maybemid) = maybemid
 -- A Table for Unique Allocation Labels
 type AllocLabelTable = [(UniqueId, AllocLabelLocation, TypeName, AllocObjInfo)]
 
-type AllocLabelLocation = (ClassName, MethodName, UniqueId, Label)
+type AllocLabelLocation = (ClassName, MethodName, UniqueId, Label, RefinedLocation)
+
+data RefinedLocation = NoRefinement | RefinedLocBy ClassName deriving Eq
 
 type AllocObjs = [Context]
 
 data AllocObjInfo = None | Lit String | UnknownLit deriving Eq
+
+instance Show RefinedLocation where
+  showsPrec p (NoRefinement) = conc [ "n/a" ]
+  showsPrec p (RefinedLocBy classname) = conc $ [ classname ]
+
+refine :: AllocLabelLocation -> ClassName -> AllocLabelLocation
+refine (classname,m,id,label,_) c = (classname,m,id,label,RefinedLocBy c)
+
+allocidToLoc :: AllocLabelTable -> UniqueId -> AllocLabelLocation
+allocidToLoc alloctable id = 
+  case [ loc' | (id', loc', _, _) <- alloctable, id==id' ] of
+    []    -> error $ "allocidToLoc: Alloc location not found: " ++ show id
+    (h:_) -> h
+
+alloclocToId :: AllocLabelTable -> AllocLabelLocation -> UniqueId
+alloclocToId alloctable loc = 
+  case [ id' | (id',loc',_, _) <- alloctable, loc==loc' ] of
+    []    -> error $ "alloclocToId: Alloc loc not found: " ++ show loc
+    (h:_) -> h
 
 --
 type AnalysisState = -- Can be extended if necessary
@@ -641,7 +664,7 @@ resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
     [ C_mtype matys meff maty atys eff aty | (_,_,(matys, maty, meff)) <- mtypes ]
 
-resolveConstraint info (cenv,eenv) (C_activation aty effid) = do
+resolveConstraint info (cenv,eenv) (C_activation aty context allocloc effid) = do
   (_,constraints,typingtable,alloctable,_,_) <- get
   let cid = getAnno aty
   let c   = case aty of { AnnoType c _ -> c; } -- aty = Intent{Xi}
@@ -658,20 +681,39 @@ resolveConstraint info (cenv,eenv) (C_activation aty effid) = do
                               , let Set ctxs = lookupCEnv cenv x ]
               
   let objinfos = 
-        [ objinfo 
-        | ctx <- strCtxs, (id,_,_,objinfo) <- alloctable
+        [ objinfo | ctx <- strCtxs, (id,_,_,objinfo) <- alloctable
         , isEmptyContext ctx == False && head (reverse ctx) == id ]
         
   let activatedClasses = [ c | Lit c <- objinfos ]
   let haveTop          = UnknownLit `elem` objinfos
         
-  liftIO $ putStrLn $ ("May activate " ++ concat (comma activatedClasses))
-  
+  -- liftIO $ putStrLn $ ("May activate " ++ concat (comma activatedClasses))
+      
+  let aux allocloc context actc = do
+        let refEntry = refine allocloc actc
+        registerAllocTableEntry refEntry (TypeName actc) None
+        
+        uniqueContext <- plusk context refEntry
+        putAllocObj uniqueContext
+        
+        activityty <- mkAnnoType (TypeName actc)
+        let activityid = getAnno activityty
+            
+        putConstraint (C_lower (Set [uniqueContext]) activityid)
+        putConstraint (C_assignfield aty activityty "intent")
+    
+  _ <- mapM_ (aux allocloc context)
+       (if haveTop then allUserActivities info else activatedClasses)
+            
   let effect = Eff $ if haveTop then EffTop else BaseEff activatedClasses
   return [ C_effect effect effid ]
                
-
 resolveConstraint info (cenv,eenv) c = return []
+
+allUserActivities :: Info -> [ClassName]
+allUserActivities info = 
+  [ uc | (uc,_) <- getUserClasses info  -- NOTE: Assume a whole program anlaysis
+       , subType info (TypeName uc) (TypeName "Activity") ]
   
 isAndroid :: StateT AnalysisState IO Bool
 isAndroid = do
@@ -765,31 +807,49 @@ getArgVartyping c ctx m id argdecls = do
 --     []    -> return $ Nothing
 --     (h:_) -> return $ Just h
 
-putAllocTableEntry :: Context -> AllocLabelLocation -> TypeName -> AllocObjInfo -> StateT AnalysisState IO Context
-putAllocTableEntry context entry@(cname,m,mid,label) newc allocobjinfo = do
-  alloctable <- registerAllocTableEntry entry newc allocobjinfo
-  let f allocsiteid = 
-        head [ entry | (allocsiteid', entry, _, _) <- alloctable
-                      , allocsiteid==allocsiteid' ]
-  let entrys = map f context
-  -- let newentrys = reverse $ take length_k $ reverse $ entrys ++ [entry]
-  let newentrys = addEntry length_k entrys entry
-  let g entry = 
-        head [ allocsiteid | (allocsiteid,entry',_, _) <- alloctable
-                           , entry==entry' ]
-  let newContext = map g newentrys
-  putAllocLabelTable alloctable
-  putAllocObj newContext
-  return newContext
+-- registerAllocTableEntry entry newc allocobjinfo
+-- newcontext <- plusk context entry
+-- putAllocObj newcontext
+    
+-- putAllocTableEntry :: Context -> AllocLabelLocation -> TypeName -> AllocObjInfo
+--                       -> StateT AnalysisState IO Context
+-- putAllocTableEntry context entry newc allocobjinfo = do
+--   alloctable <- registerAllocTableEntry entry newc allocobjinfo
   
+--   let entrys     = map (allocidToLoc alloctable) context
+--   let newentrys  = addEntry length_k entrys entry
+--   let newContext = map (alloclocToId alloctable) newentrys
+      
+--   putAllocLabelTable alloctable
+--   putAllocObj newContext
+--   return newContext
+  
+registerAllocTableEntry :: AllocLabelLocation -> TypeName -> AllocObjInfo 
+                           -> StateT AnalysisState IO ()
 registerAllocTableEntry entry newc objinfo = do  
   alloctable <- getAllocLabelTable
-  case [ (id,entry',newc,objinfo) 
-       | (id,entry',newc,objinfo) <- alloctable, entry==entry' ] of
-    (h:t) -> return alloctable
-    []    -> do id <- newId
-                return ((id,entry,newc,objinfo):alloctable)
+  newalloctable <- 
+    case [ (id,entry',newc,objinfo)
+         | (id,entry',newc,objinfo) <- alloctable, entry==entry' ] of
+      (h:t) -> return alloctable
+      []    -> do id <- newId
+                  return ((id,entry,newc,objinfo):alloctable)
+  putAllocLabelTable newalloctable
   
+plusk :: Context -> AllocLabelLocation -> StateT AnalysisState IO Context
+plusk context entry = do
+  alloctable <- getAllocLabelTable
+  
+  -- liftIO $ prAllocLabelTable alloctable
+  
+  let entrys     = map (allocidToLoc alloctable) context
+  let newentrys  = reverse $ take length_k $ reverse $ (entrys ++ [entry])
+  let newContext = map (alloclocToId alloctable) newentrys
+      
+  -- liftIO $ putStrLn $ "{" ++ showContext context ++ "}" ++ " + " ++ show entry ++ 
+  --   " = " ++ showContext newContext
+  return newContext
+
 getAllocLabelTable :: StateT AnalysisState IO AllocLabelTable
 getAllocLabelTable = do
   (_,_,_,alloctable,_,_) <- get
@@ -805,9 +865,9 @@ prAllocLabelTable alloctable = do
   putStrLn "Allocated Objects and Their Labels"
   mapM_ pr $ reverse $ alloctable
   where
-    pr (id, (c,m,mid,label), newc, objinfo) = 
+    pr (id, (c,m,mid,label,refmnt), newc, objinfo) = 
       putStrLn $ " - " ++ obj_alloc_site_prefix ++ show id ++ " : " ++ 
-      "(" ++ c ++","++ m ++ "," ++ show mid ++ "," ++ show label ++ ")" ++
+      "(" ++ c ++","++ m ++ "," ++ show mid ++ "," ++ show label ++ "," ++ show refmnt ++")" ++
       " " ++ "new" ++ " " ++ show newc ++ " " ++ showObjInfo objinfo
       
 showObjInfo None       = ""
@@ -893,7 +953,7 @@ lookupPrimTyping typingtable m id =
 --
 prActionLookupTable :: Info -> Context -> AllocLabelTable -> ActionLookupTable -> AnalysisState -> IO ()
 prActionLookupTable info context initalloctable actionlookuptable initstate = do
-  putStrLn $ "Constraints: starting with the context " ++ showContext context
+  putStrLn $ "The initial context: " ++ showContext context
   (_,state) <- 
     runStateT (runAnalysis info context initalloctable actionlookuptable) initstate
   -- (_,state) <- runStateT (runAllActions info context actionlookuptable) initstate
@@ -917,6 +977,8 @@ prepareContext alloctbl = do
 runAnalysis :: Info -> Context -> AllocLabelTable -> ActionLookupTable -> StateT AnalysisState IO ()
 runAnalysis info context initalloctable actionlookuptable = do
   -- 1. Initialization
+  liftIO $ putStrLn $ "### Initialization Round ###\n"
+  
   prepareContext initalloctable 
   runAllActions info context actionlookuptable
   alloctable <- getAllocLabelTable
@@ -925,9 +987,13 @@ runAnalysis info context initalloctable actionlookuptable = do
   -- liftIO $ prAllocObjs allocobjs
   
   -- 2. Do the rest of the iterative anaylsis
-  repRunAnalysis info context actionlookuptable
+  iteration <- repRunAnalysis 1 info context actionlookuptable
   
-repRunAnalysis info context actionlookuptable = do
+  liftIO $ putStrLn $ "Total " ++ show iteration ++ " iterations"
+  
+repRunAnalysis iteration info context actionlookuptable = do
+  liftIO $ putStrLn $ "\n### Round " ++ show iteration ++ "###\n"
+  
   -- 2.1. Generation of allocated objects
   n <- generateObjects 1 info actionlookuptable
   
@@ -936,7 +1002,7 @@ repRunAnalysis info context actionlookuptable = do
   -- liftIO $ putStrLn $ ""
   -- liftIO $ putStrLn $ "Constraints:"
   -- liftIO $ mapM_ prConstraint $ reverse $ constraints
-  liftIO $ putStrLn $ "[" ++ show n ++ " " ++ "iterations" ++ "]"
+  liftIO $ putStrLn $ "Generating objects " ++ "[" ++ show n ++ " " ++ "iterations" ++ "]"
   liftIO $ putStrLn $ ""
   
   allocobjs1 <- getAllocObjs
@@ -948,8 +1014,8 @@ repRunAnalysis info context actionlookuptable = do
   -- liftIO $ prAllocLabelTable alloctable
   -- liftIO $ prAllocObjs allocobjs2
   
-  if length allocobjs1 == length allocobjs2 then return ()
-    else repRunAnalysis info context actionlookuptable
+  if length allocobjs1 == length allocobjs2 then return iteration
+    else repRunAnalysis (iteration+1) info context actionlookuptable
 
 --
 generateObjects :: Int -> Info -> ActionLookupTable -> StateT AnalysisState IO Int
@@ -1009,6 +1075,7 @@ solveAllConstraints info = do
   (n, solution) <- solveAllConstraints' info 1 solution1 
   liftIO $ putStrLn $ ""
   liftIO $ putStrLn $ "Solving Constraints [" ++ show n ++ " iterations]"
+  liftIO $ putStrLn $ "The solution is:"
   liftIO $ prSolution $ solution
   liftIO $ putStrLn $ ""
 
@@ -1542,9 +1609,13 @@ mkActionExpr (New c es label) = do
             case typingctx of
               (cname,_,_,Just (m,id)) -> (cname, m, id)
               _                       -> error "mkActionExpr: New: unexpected typingctx"
-              -- (cname,_,_,Nothing)     -> (cname, "*", 100)
               
-      uniqueContext <- putAllocTableEntry context (cname, m, id, label) c None
+      -- uniqueContext <- putAllocTableEntry context (cname, m, id, label, NoRefinement) c None
+      let entry = (cname, m, id, label, NoRefinement)
+      registerAllocTableEntry entry c None
+      uniqueContext <- plusk context entry
+      putAllocObj uniqueContext
+      
       putConstraint (C_lower (Set [uniqueContext]) cid)
       addInvokeConstraint c cid cty atys effVar
       
@@ -1611,7 +1682,7 @@ mkActionExpr (Assign (StaticField c f maybety) e2) = do
       avoidty <- mkVoidType 
       return (avoidty, eff2)
 
-mkActionExpr (Assign (Prim "[]" _ [earr,eidx]) e2) = do
+mkActionExpr (Assign (Prim "[]" _ [earr,eidx] label) e2) = do
   actionexparr <- mkActionExpr earr
   actionexpidx <- mkActionExpr eidx
   actionexp2   <- mkActionExpr e2
@@ -1713,9 +1784,13 @@ mkActionExpr (ConstLit s label) = do
     actionLit label typingenv typingctx info context = do
       aty <- mkAnnoType (TypeName strClass)
       let id = getAnno aty
-      let entry = (strClass, "lit_"++s, 0, label) --
-      uniqueContext <-
-        putAllocTableEntry context entry (TypeName strClass) (Lit s)
+      let entry = (strClass, "lit_"++s, 0, label, NoRefinement) --
+          
+      -- uniqueContext <- putAllocTableEntry context entry (TypeName strClass) (Lit s)
+      registerAllocTableEntry entry (TypeName strClass) (Lit s)
+      uniqueContext <- plusk context entry
+      putAllocObj uniqueContext
+          
       putConstraint (C_lower (Set [uniqueContext]) id)
       return (aty, noEffect)
       
@@ -1723,7 +1798,7 @@ mkActionExpr (ConstLit s label) = do
 mkActionExpr (ConstChar s) = do  
   return $ actionConst (TypeName "char")
 
-mkActionExpr (Prim "[]" tys [e1,e2]) = do
+mkActionExpr (Prim "[]" tys [e1,e2] label) = do
   actionexp1 <- mkActionExpr e1
   actionexp2 <- mkActionExpr e2
   return $ actionArray actionexp1 actionexp2 
@@ -1734,7 +1809,7 @@ mkActionExpr (Prim "[]" tys [e1,e2]) = do
       let AnnoArrayType atyelem idelem= atye1
       return (atyelem, EffUnion effe1 effe2)
 
-mkActionExpr (Prim "super" tys es) = do
+mkActionExpr (Prim "super" tys es label) = do
   actiones <- mapM mkActionExpr es
   return $ actionSuper actiones 
   where
@@ -1759,7 +1834,7 @@ mkActionExpr (Prim "super" tys es) = do
       let effmivk = Eff $ BaseEff $ if cond then [pc] else []
       return (pcty, EffUnion eff effmivk)
 
-mkActionExpr (Prim n tys es) = do
+mkActionExpr (Prim n tys es label) = do
   actiones <- mapM mkActionExpr es
   return $ actionprim actiones
   where
@@ -1787,11 +1862,19 @@ mkActionExpr (Prim n tys es) = do
       effVar <- newEffVar
       let EffVar effVarId = effVar
       
+      let (current_classname, current_m, current_id) = 
+            case typingctx of
+              (cname,_,_,Just (m,id)) -> (cname, m, id)
+              _                       -> error "mkActionExpr: Prim: unexpected typingctx"
+              
+      let allocloc = 
+            (current_classname, current_m, current_id, label, NoRefinement) -- At the moment
+      
       _ <- if n /= "primStartActivity" then return () 
            else do
                 let id = head (reverse context)
                 let aintentty = head atyes
-                putConstraint (C_activation aintentty effVarId)
+                putConstraint (C_activation aintentty context allocloc effVarId)
 
       cond <- isAndroid
       let eff_android = if cond then effVar else noEffect

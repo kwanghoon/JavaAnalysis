@@ -1672,7 +1672,7 @@ happyReduction_28 (_ `HappyStk`
 	(HappyTerminal (TokenVar happy_var_1)) `HappyStk`
 	happyRest)
 	 = HappyAbsSyn20
-		 (Prim happy_var_1 [] happy_var_3
+		 (Prim happy_var_1 [] happy_var_3 0
 	) `HappyStk` happyRest
 
 happyReduce_29 = happySpecReduce_3  20 happyReduction_29
@@ -1680,7 +1680,7 @@ happyReduction_29 (HappyAbsSyn33  happy_var_3)
 	_
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn20
-		 (Prim "==" [] [happy_var_1, happy_var_3]
+		 (Prim "==" [] [happy_var_1, happy_var_3] 0
 	)
 happyReduction_29 _ _ _  = notHappyAtAll 
 
@@ -1689,7 +1689,7 @@ happyReduction_30 (HappyAbsSyn33  happy_var_3)
 	_
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn20
-		 (Prim "+" [] [happy_var_1, happy_var_3]
+		 (Prim "+" [] [happy_var_1, happy_var_3] 0
 	)
 happyReduction_30 _ _ _  = notHappyAtAll 
 
@@ -1698,7 +1698,7 @@ happyReduction_31 (HappyAbsSyn33  happy_var_3)
 	_
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn20
-		 (Prim "-" [] [happy_var_1, happy_var_3]
+		 (Prim "-" [] [happy_var_1, happy_var_3] 0
 	)
 happyReduction_31 _ _ _  = notHappyAtAll 
 
@@ -1707,7 +1707,7 @@ happyReduction_32 (HappyAbsSyn33  happy_var_3)
 	_
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn20
-		 (Prim "*" [] [happy_var_1, happy_var_3]
+		 (Prim "*" [] [happy_var_1, happy_var_3] 0
 	)
 happyReduction_32 _ _ _  = notHappyAtAll 
 
@@ -1716,7 +1716,7 @@ happyReduction_33 (HappyAbsSyn33  happy_var_3)
 	_
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn20
-		 (Prim "/" [] [happy_var_1, happy_var_3]
+		 (Prim "/" [] [happy_var_1, happy_var_3] 0
 	)
 happyReduction_33 _ _ _  = notHappyAtAll 
 
@@ -1828,7 +1828,7 @@ happyReduction_47 (HappyAbsSyn33  happy_var_3)
 	_
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn21
-		 (Prim "<" [] [happy_var_1, happy_var_3]
+		 (Prim "<" [] [happy_var_1, happy_var_3] 0
 	)
 happyReduction_47 _ _ _  = notHappyAtAll 
 
@@ -1837,7 +1837,7 @@ happyReduction_48 (HappyAbsSyn33  happy_var_3)
 	_
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn21
-		 (Prim "!=" [] [happy_var_1, happy_var_3]
+		 (Prim "!=" [] [happy_var_1, happy_var_3] 0
 	)
 happyReduction_48 _ _ _  = notHappyAtAll 
 
@@ -1845,7 +1845,7 @@ happyReduce_49 = happySpecReduce_2  21 happyReduction_49
 happyReduction_49 _
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn21
-		 (Prim "++" [] [happy_var_1, happy_var_1]
+		 (Prim "++" [] [happy_var_1, happy_var_1] 0
 	)
 happyReduction_49 _ _  = notHappyAtAll 
 
@@ -1853,7 +1853,7 @@ happyReduce_50 = happySpecReduce_2  21 happyReduction_50
 happyReduction_50 _
 	(HappyAbsSyn33  happy_var_1)
 	 =  HappyAbsSyn21
-		 (Prim "--" [] [happy_var_1, happy_var_1]
+		 (Prim "--" [] [happy_var_1, happy_var_1] 0
 	)
 happyReduction_50 _ _  = notHappyAtAll 
 
@@ -1880,7 +1880,7 @@ happyReduction_53 (_ `HappyStk`
 	(HappyAbsSyn22  happy_var_1) `HappyStk`
 	happyRest)
 	 = HappyAbsSyn22
-		 (Prim "[]" [] [happy_var_1, happy_var_3]
+		 (Prim "[]" [] [happy_var_1, happy_var_3] 0
 	) `HappyStk` happyRest
 
 happyReduce_54 = happyReduce 6 22 happyReduction_54

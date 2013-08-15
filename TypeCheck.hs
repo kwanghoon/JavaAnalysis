@@ -393,8 +393,8 @@ firstStmt (For maybe x e1 e2 e3 s) = Just (For maybe x e1 e2 e3 s, [])
 firstStmt (While e s) = Just (While e s, [])
 firstStmt (Block s) = Just (Block s, [])
 
-isSuperCall (Expr (Prim "super" _ es)) = True
-isSuperCall _                          = False
+isSuperCall (Expr (Prim "super" _ es _)) = True
+isSuperCall _                            = False
 
 --
 tcExp :: Info -> TypingEnv -> Expr -> ErrorT TCError IO (TypeName, Expr)
@@ -484,13 +484,13 @@ tcExp info env (ConstNull) = return $ (TypeName "null", ConstNull) -- TODO: null
 tcExp info env (ConstNum n) = return $ (TypeName "int", ConstNum n)
 tcExp info env (ConstLit s label) = return $ (TypeName "String", ConstLit s label)
 tcExp info env (ConstChar s) = return $ (TypeName "char", ConstChar s)
-tcExp info env (Prim "[]" pargtys [e1,e2]) = 
+tcExp info env (Prim "[]" pargtys [e1,e2] label) = 
   do (ty1, expr1) <- tcExp info env e1
      (ty2, expr2) <- tcExp info env e2
      if isArray ty1 == False || isInt ty2 == False
        then throwError ("tcExp: type mismatch in array indexing: " ++ 
-                        show (Prim "[]" pargtys [e1,e2]))
-       else return $ (elemType ty1, Prim "[]" pargtys [expr1,expr2])
+                        show (Prim "[]" pargtys [e1,e2] label))
+       else return $ (elemType ty1, Prim "[]" pargtys [expr1,expr2] label)
 
 -- tcExp info env (Prim "[]=" [e1, e2]) = 
 --   do (ty1, expr1) <- tcExp info env e1
@@ -500,15 +500,15 @@ tcExp info env (Prim "[]" pargtys [e1,e2]) =
 --                         show (Prim "[]=" [e1, e2]))
 --        else return $ (TypeName "void", Prim "[]=" [expr1,expr2])
         
-tcExp info env (Prim "super" pargtys es) = 
-  do throwError ("tcExp: misplaced super call: " ++ show (Prim "super" pargtys es))
+tcExp info env (Prim "super" pargtys es label) = 
+  do throwError ("tcExp: misplaced super call: " ++ show (Prim "super" pargtys es label))
 
-tcExp info env (Prim n pargtys es) = 
+tcExp info env (Prim n pargtys es label) = 
   if elem n ["==", "!="] == False
-     then tcExp' info env (Prim n pargtys es)
-     else tcExp'' info env (Prim n pargtys es)     
+     then tcExp' info env (Prim n pargtys es label)
+     else tcExp'' info env (Prim n pargtys es label)     
   
-tcExp' info env (Prim n pargtys es) =  
+tcExp' info env (Prim n pargtys es label) =  
   do tyexprs <- mapM (tcExp info env) es
      let (tys,exprs) = unzip tyexprs
      let rettys = lookupPrim n tys
@@ -520,23 +520,23 @@ tcExp' info env (Prim n pargtys es) =
      --                                    | (ty1,ty2) <- zip tys argtys]]
          
      case rettys of
-       []  -> throwError ("tcExp: type mismatch in " ++ show (Prim n tys es))
-       [h] -> return $ (h, Prim n tys exprs)
-       _   -> throwError ("tcExp: multiple type matches: " ++ show (Prim n tys es))
+       []  -> throwError ("tcExp: type mismatch in " ++ show (Prim n tys es label))
+       [h] -> return $ (h, Prim n tys exprs label)
+       _   -> throwError ("tcExp: multiple type matches: " ++ show (Prim n tys es label))
 
-tcExp'' info env (Prim n pargtys [e1,e2]) = -- ==, !=
+tcExp'' info env (Prim n pargtys [e1,e2] label) = -- ==, !=
   do tyexprs <- mapM (tcExp info env) [e1,e2]
      let (tys,exprs) = unzip tyexprs
      let [ty1,ty2] = tys
      if (subType info ty1 ty2 || subType info ty2 ty1) == False
-       then throwError ("tcExp: type mismatch in " ++ show (Prim n tys [e1,e2]))
-       else return $ (TypeName "boolean", Prim n tys exprs)
+       then throwError ("tcExp: type mismatch in " ++ show (Prim n tys [e1,e2] label))
+       else return $ (TypeName "boolean", Prim n tys exprs label)
             
 --
 legalLhs (Var x)             = x /= "this"
 legalLhs (Field _ _ _)       = True
 legalLhs (StaticField _ _ _) = True
-legalLhs (Prim "[]" _ _)     = True
+legalLhs (Prim "[]" _ _ _)   = True
 legalLhs _                   = False
 
 
@@ -557,18 +557,18 @@ tcBeginStmt info ctx env retty stmt =
 
 insertSuper info ctx env retty stmt = do
   (env1,stmt1) <- tcStmt info ctx env retty stmt
-  return (env1, Seq (Expr (Prim "super" [] [])) stmt1)
+  return (env1, Seq (Expr (Prim "super" [] [] 0)) stmt1)
 
 tcSuperCall :: Info -> TypingCtx -> TypingEnv -> Stmt -> ErrorT TCError IO (TypingEnv, Stmt)
-tcSuperCall info ctx env (Expr (Prim "super" pargtys es)) =
+tcSuperCall info ctx env (Expr (Prim "super" pargtys es label)) =
   do argtysexprs <- mapM (tcExp info env) es
      let (argtys2,argexprs) = unzip argtysexprs
      let p          = getParentClass ctx
      let maybektype = lookupKtype info (TypeName p) argtys2
      let argtys1    = fromJust maybektype
      if isNothing maybektype
-       then throwError ("tcExp: invalid super call: " ++ show (Prim "super" argtys2 es))
-       else return $ (env, (Expr (Prim "super" argtys2 argexprs)))
+       then throwError ("tcExp: invalid super call: " ++ show (Prim "super" argtys2 es label))
+       else return $ (env, (Expr (Prim "super" argtys2 argexprs label)))
         
 tcSuperCall info ctx env stmt =
   throwError ("tcSuperCall: unexpected statement: " ++ show stmt)

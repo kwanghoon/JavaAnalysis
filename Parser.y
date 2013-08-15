@@ -134,12 +134,12 @@ abstractM
 
 K       : classname '(' varDecl ')' '{' stmts '}' { ConstrDecl $1 0 $3 (toStmt $6) }
 
-expr    : var '(' exprs ')' { Prim $1 [] $3 }
-        | arg equal arg    { Prim "==" [] [$1, $3] }
-        | arg '+' arg      { Prim "+" [] [$1, $3] }
-        | arg '-' arg      { Prim "-" [] [$1, $3] }
-        | arg '*' arg      { Prim "*" [] [$1, $3] }
-        | arg '/' arg      { Prim "/" [] [$1, $3] }
+expr    : var '(' exprs ')' { Prim $1 [] $3 0 }
+        | arg equal arg    { Prim "==" [] [$1, $3] 0 }
+        | arg '+' arg      { Prim "+" [] [$1, $3] 0 }
+        | arg '-' arg      { Prim "-" [] [$1, $3] 0 }
+        | arg '*' arg      { Prim "*" [] [$1, $3] 0 }
+        | arg '/' arg      { Prim "/" [] [$1, $3] 0 }
         | primary          { $1 }
 
 primary : vars                         { $1 }
@@ -154,14 +154,14 @@ primary : vars                         { $1 }
         | '(' expr ')'                 { $2 }
         | '(' type ')' expr            { Cast $2 $4 }
         | vars '=' expr                { Assign $1 $3 }
-        | arg lt arg                   { Prim "<" [] [$1, $3] }
-        | arg noteq arg                { Prim "!=" [] [$1, $3] }
-        | arg inc                      { Prim "++" [] [$1, $1] }
-        | arg dec                      { Prim "--" [] [$1, $1] }
+        | arg lt arg                   { Prim "<" [] [$1, $3] 0 }
+        | arg noteq arg                { Prim "!=" [] [$1, $3] 0 }
+        | arg inc                      { Prim "++" [] [$1, $1] 0 }
+        | arg dec                      { Prim "--" [] [$1, $1] 0 }
 
 vars    : var                          { Var $1 }
         | vars '.' var                 { Field $1 $3 Nothing }
-        | vars '[' expr ']'            { Prim "[]" [] [$1, $3] }
+        | vars '[' expr ']'            { Prim "[]" [] [$1, $3] 0 }
         | vars '.' var '(' exprs ')'    { Invoke $1 $3 $5 Nothing }
         | typename  '.' var            { StaticField (TypeName $1) $3 Nothing }
         | typename '.' var '(' exprs ')'{ StaticInvoke (TypeName $1) $3 $5 Nothing }
