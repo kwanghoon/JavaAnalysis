@@ -61,6 +61,12 @@ tc_android = map ("./sample/androidgame/" ++)
                "Game.java"
              ]
              
+tc_android1 = map ("./sample/androidsmall/" ++)
+             [ 
+               "Android.java",
+               "Back.java"
+             ]
+
 tc_array =  map ("./sample/array/" ++)
              [ 
                "Array.java"

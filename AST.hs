@@ -65,7 +65,7 @@ data Class = Class [Attrib] Name (Maybe Name) [Name] MemberDecls
 
 type MemberDecls = [MemberDecl]
 
-data TypeName = TypeName Name | ArrayTypeName TypeName
+data TypeName = TypeName Name | ArrayTypeName TypeName deriving Eq
 
 isBoolean (TypeName "boolean") = True
 isBoolean _ = False

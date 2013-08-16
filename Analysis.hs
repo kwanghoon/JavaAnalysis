@@ -77,12 +77,13 @@ emptyContext = []
 isEmptyContext [] = True
 isEmptyContext _  = False
 
-length_k = 1
+length_k = 2
 
 -- Types annotated with a set of contexts
 data AnnoType = 
     AnnoType Name UniqueId           -- C{Xi}
   | AnnoArrayType AnnoType UniqueId  -- C[]{Xi}[]{Xj}
+    deriving Eq
     
 instance Show AnnoType where    
   showsPrec p (AnnoType n id)        = 
@@ -222,6 +223,8 @@ data Constraint  =
     
     -- Intent{X} @ ctx.label ~~~> eff
   | C_activation AnnoType Context AllocLabelLocation UniqueId
+    
+    deriving Eq
 
 constraint_var_prefix = "x"
 effect_var_prefix = "e"
@@ -450,7 +453,7 @@ type AllocLabelLocation = (ClassName, MethodName, UniqueId, Label, RefinedLocati
 
 data RefinedLocation = NoRefinement | RefinedLocBy ClassName deriving Eq
 
-type AllocObjs = [Context]
+type AllocObjs = [(Context, AnnoType)] -- List of pairs of an object and its type
 
 data AllocObjInfo = None | Lit String | UnknownLit deriving Eq
 
@@ -507,7 +510,9 @@ resetConstraints constraints = do
 putConstraint :: Constraint -> StateT AnalysisState IO ()
 putConstraint constraint = do
   (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
-  put (option,constraint:constraints,typingtable,alloctable,allocobjs,uniqueid)
+  if (constraint `elem` constraints) == False
+    then put (option,constraint:constraints,typingtable,alloctable,allocobjs,uniqueid)
+    else return ()
   
 resolveConstraint ::  Info -> Solution -> Constraint -> StateT AnalysisState IO [Constraint]
 resolveConstraint info (cenv,eenv) (C_assignfield aty1 aty2 f) = do
@@ -692,21 +697,31 @@ resolveConstraint info (cenv,eenv) (C_activation aty context allocloc effid) = d
   let aux allocloc context actc = do
         let refEntry = refine allocloc actc
         registerAllocTableEntry refEntry (TypeName actc) None
-        
         uniqueContext <- plusk context refEntry
-        putAllocObj uniqueContext
         
-        activityty <- mkAnnoType (TypeName actc)
-        let activityid = getAnno activityty
+        maybeactivityty <- isPresent uniqueContext
+        (activityty,activitytyid) <-
+          if isNothing maybeactivityty then do
+            activityty <- mkAnnoType (TypeName actc) -- New Activity
+            let activitytyid = getAnno activityty 
+            return (activityty, activitytyid)
+          else do
+            let aty = fromJust maybeactivityty
+            return (aty, getAnno aty)
+          
+        putAllocObj uniqueContext activityty
+        
+        -- liftIO $ putStrLn $ "#### " ++ show activityid ++ " " ++ actc
+        
+        return [ C_lower (Set [uniqueContext]) activitytyid
+               , C_assignfield aty activityty "intent" ]
             
-        putConstraint (C_lower (Set [uniqueContext]) activityid)
-        putConstraint (C_assignfield aty activityty "intent")
-    
-  _ <- mapM_ (aux allocloc context)
-       (if haveTop then allUserActivities info else activatedClasses)
+  constraintss <-
+    mapM (aux allocloc context)
+    (if haveTop then allUserActivities info else activatedClasses)
             
   let effect = Eff $ if haveTop then EffTop else BaseEff activatedClasses
-  return [ C_effect effect effid ]
+  return $ concat constraintss ++ [ C_effect effect effid ]
                
 resolveConstraint info (cenv,eenv) c = return []
 
@@ -824,6 +839,13 @@ getArgVartyping c ctx m id argdecls = do
 --   putAllocObj newContext
 --   return newContext
   
+isPresent :: Context -> StateT AnalysisState IO (Maybe AnnoType)
+isPresent context = do
+  allocobjs <- getAllocObjs
+  case [ aty' | (context',aty') <- allocobjs, context==context' ] of
+    []   -> return Nothing
+    (h:_)-> return (Just h)
+       
 registerAllocTableEntry :: AllocLabelLocation -> TypeName -> AllocObjInfo 
                            -> StateT AnalysisState IO ()
 registerAllocTableEntry entry newc objinfo = do  
@@ -879,19 +901,23 @@ getAllocObjs = do
   (_,_,_,_,allocobjs,_) <- get
   return allocobjs
 
-putAllocObj :: Context -> StateT AnalysisState IO ()
-putAllocObj allocobj = do
+putAllocObj :: Context -> AnnoType -> StateT AnalysisState IO ()
+putAllocObj allocobj aty = do
   (option,constraints,typingtable,alloctable,allocobjs,uniqueid) <- get
-  let allocobjs' = if allocobj `elem` allocobjs then allocobjs
-                   else allocobj:allocobjs
+  let allocobjs' = 
+        case [ aty' | (allocobj',aty') <- allocobjs, allocobj==allocobj' ] of
+          [ ] -> (allocobj,aty):allocobjs
+          _   -> allocobjs
+  -- let allocobjs' = if allocobj `elem` allocobjs then allocobjs
+  --                  else allocobj:allocobjs
   put (option,constraints,typingtable,alloctable,allocobjs',uniqueid)
 
 prAllocObjs :: AllocObjs -> IO ()
 prAllocObjs allocobjs = do
-  putStrLn "Allocated Objects"
+  putStrLn "Allocated Contexual Objects"
   mapM_ pr $ reverse $ allocobjs
   where
-    pr context = putStrLn $ " - " ++ showContext context
+    pr (context,aty) = putStrLn $ " - " ++ showContext context ++ " : " ++ show aty
 
 -- 
 type ActionMember = 
@@ -962,8 +988,8 @@ prActionLookupTable info context initalloctable actionlookuptable initstate = do
   putStrLn ""
   prAllocLabelTable alloctable
   putStrLn ""
-  -- prAllocObjs allocobjs
-  -- putStrLn ""
+  prAllocObjs allocobjs
+  putStrLn ""
   
 
 -- If the initial context is not empty  
@@ -990,6 +1016,10 @@ runAnalysis info context initalloctable actionlookuptable = do
   iteration <- repRunAnalysis 1 info context actionlookuptable
   
   liftIO $ putStrLn $ "Total " ++ show iteration ++ " iterations"
+  liftIO $ putStrLn $ "The final set of constraints:"
+  
+  constraints <- getConstraints
+  liftIO $ mapM_ prConstraint $ reverse $ nub $ constraints
   
 repRunAnalysis iteration info context actionlookuptable = do
   liftIO $ putStrLn $ "\n### Round " ++ show iteration ++ "###\n"
@@ -1001,7 +1031,7 @@ repRunAnalysis iteration info context actionlookuptable = do
   constraints <- getConstraints
   -- liftIO $ putStrLn $ ""
   -- liftIO $ putStrLn $ "Constraints:"
-  -- liftIO $ mapM_ prConstraint $ reverse $ constraints
+  -- liftIO $ mapM_ prConstraint $ reverse $ nub $ constraints
   liftIO $ putStrLn $ "Generating objects " ++ "[" ++ show n ++ " " ++ "iterations" ++ "]"
   liftIO $ putStrLn $ ""
   
@@ -1032,7 +1062,7 @@ generateObjects n info actionlookuptable = do
          
 runForAllContext info actionlookuptable = foldr f (return ())
   where
-    f ctx m = do
+    f (ctx,aty) m = do
       runAllActions info ctx actionlookuptable; m
     
 runAllActions :: Info -> Context -> ActionLookupTable -> StateT AnalysisState IO ()
@@ -1068,7 +1098,7 @@ solveAllConstraints info = do
   constraints   <- getConstraints
   
   liftIO $ putStrLn $ "Initial constraints"
-  liftIO $ mapM_ prConstraint $ constraints
+  liftIO $ mapM_ prConstraint $ nub $ constraints
   liftIO $ putStrLn $ ""
   
   solution1 <- solve constraints
@@ -1090,13 +1120,15 @@ solveAllConstraints' info n solution1 = do
   let newconstraints = concat [ c:cs | (c,cs) <- zip constraints newconstraintss ]
       
   -- liftIO $ putStrLn $ "Generated new constraints at the iteration " ++ show n
-  -- liftIO $ mapM_ prConstraint $ concat $ newconstraintss
+  -- liftIO $ mapM_ prConstraint $ nub $ concat $ newconstraintss
   -- liftIO $ putStrLn $ ""
       
   solution2 <- solve newconstraints
+  resetConstraints newconstraints
+  
   if identicalSolution solution1 solution2 
     then return (n, solution1)
-    else do resetConstraints newconstraints; solveAllConstraints' info (n+1) solution2
+    else solveAllConstraints' info (n+1) solution2
 
 --
 prSolution (cenv, eenv) = do
@@ -1614,7 +1646,7 @@ mkActionExpr (New c es label) = do
       let entry = (cname, m, id, label, NoRefinement)
       registerAllocTableEntry entry c None
       uniqueContext <- plusk context entry
-      putAllocObj uniqueContext
+      putAllocObj uniqueContext cty
       
       putConstraint (C_lower (Set [uniqueContext]) cid)
       addInvokeConstraint c cid cty atys effVar
@@ -1789,7 +1821,7 @@ mkActionExpr (ConstLit s label) = do
       -- uniqueContext <- putAllocTableEntry context entry (TypeName strClass) (Lit s)
       registerAllocTableEntry entry (TypeName strClass) (Lit s)
       uniqueContext <- plusk context entry
-      putAllocObj uniqueContext
+      putAllocObj uniqueContext aty
           
       putConstraint (C_lower (Set [uniqueContext]) id)
       return (aty, noEffect)
