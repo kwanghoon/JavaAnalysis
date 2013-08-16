@@ -43,7 +43,7 @@ doAndroidAnalysis program info = do
         (option, constraints, typingtable, alloctable, allocobjs, uniqueid)
         
   let initContext = [1] -- emptyContext
-  let initalloctable = [(1,("Main","Main",1,0, NoRefinement),TypeName "Main", None)] -- TODO: NoRefinement?
+  let initalloctable = [(1,("Android Platform","launch",1,0, NoRefinement),TypeName "Main", None)] -- TODO: NoRefinement?
       
   actionlookuptable <- mkActionProgram info program
   prActionLookupTable info initContext initalloctable actionlookuptable state
@@ -77,7 +77,7 @@ emptyContext = []
 isEmptyContext [] = True
 isEmptyContext _  = False
 
-length_k = 2
+length_k = 1
 
 -- Types annotated with a set of contexts
 data AnnoType = 
@@ -980,9 +980,8 @@ lookupPrimTyping typingtable m id =
 prActionLookupTable :: Info -> Context -> AllocLabelTable -> ActionLookupTable -> AnalysisState -> IO ()
 prActionLookupTable info context initalloctable actionlookuptable initstate = do
   putStrLn $ "The initial context: " ++ showContext context
-  (_,state) <- 
+  (solution,state) <- 
     runStateT (runAnalysis info context initalloctable actionlookuptable) initstate
-  -- (_,state) <- runStateT (runAllActions info context actionlookuptable) initstate
   let (_,_,typingtable,alloctable,allocobjs,_) = state
   prTypingTable typingtable
   putStrLn ""
@@ -990,7 +989,7 @@ prActionLookupTable info context initalloctable actionlookuptable initstate = do
   putStrLn ""
   prAllocObjs allocobjs
   putStrLn ""
-  
+  prPointsToGraph info context state solution
 
 -- If the initial context is not empty  
 -- then an appropriate set of objects must be declared according to
@@ -1000,7 +999,8 @@ prepareContext alloctbl = do
   (option,c,t,a,o,i) <- get
   put (option,c,t,alloctbl ++ a,o,i)
 
-runAnalysis :: Info -> Context -> AllocLabelTable -> ActionLookupTable -> StateT AnalysisState IO ()
+runAnalysis :: Info -> Context -> AllocLabelTable -> ActionLookupTable 
+               -> StateT AnalysisState IO Solution
 runAnalysis info context initalloctable actionlookuptable = do
   -- 1. Initialization
   liftIO $ putStrLn $ "### Initialization Round ###\n"
@@ -1013,13 +1013,16 @@ runAnalysis info context initalloctable actionlookuptable = do
   -- liftIO $ prAllocObjs allocobjs
   
   -- 2. Do the rest of the iterative anaylsis
-  iteration <- repRunAnalysis 1 info context actionlookuptable
+  (iteration, solution) <- repRunAnalysis 1 info context actionlookuptable
   
   liftIO $ putStrLn $ "Total " ++ show iteration ++ " iterations"
-  liftIO $ putStrLn $ "The final set of constraints:"
   
+  liftIO $ putStrLn $ "The final set of constraints:"
   constraints <- getConstraints
   liftIO $ mapM_ prConstraint $ reverse $ nub $ constraints
+  
+  return solution
+  
   
 repRunAnalysis iteration info context actionlookuptable = do
   liftIO $ putStrLn $ "\n### Round " ++ show iteration ++ "###\n"
@@ -1036,7 +1039,7 @@ repRunAnalysis iteration info context actionlookuptable = do
   liftIO $ putStrLn $ ""
   
   allocobjs1 <- getAllocObjs
-  solveAllConstraints info
+  solution <- solveAllConstraints info
   
   -- 2.3. Repeate the analysis if new objects are generated
   allocobjs2 <- getAllocObjs
@@ -1044,7 +1047,7 @@ repRunAnalysis iteration info context actionlookuptable = do
   -- liftIO $ prAllocLabelTable alloctable
   -- liftIO $ prAllocObjs allocobjs2
   
-  if length allocobjs1 == length allocobjs2 then return iteration
+  if length allocobjs1 == length allocobjs2 then return (iteration, solution)
     else repRunAnalysis (iteration+1) info context actionlookuptable
 
 --
@@ -1093,7 +1096,7 @@ runOneEntry info context entry m = do
 --       m
   
 --
-solveAllConstraints :: Info -> StateT AnalysisState IO ()
+solveAllConstraints :: Info -> StateT AnalysisState IO Solution
 solveAllConstraints info = do
   constraints   <- getConstraints
   
@@ -1108,6 +1111,8 @@ solveAllConstraints info = do
   liftIO $ putStrLn $ "The solution is:"
   liftIO $ prSolution $ solution
   liftIO $ putStrLn $ ""
+  
+  return solution
 
 solveAllConstraints' :: Info -> Int -> Solution -> StateT AnalysisState IO (Int, Solution)
 solveAllConstraints' info n solution1 = do
@@ -1928,3 +1933,10 @@ mkCast :: TypeName -> AnnoType -> AnnoType
 mkCast (TypeName c)       (AnnoType d id)        = AnnoType c id
 mkCast (TypeName c)       (AnnoArrayType aty id) = AnnoType c id
 mkCast (ArrayTypeName ty) (AnnoArrayType aty id) = AnnoArrayType (mkCast ty aty) id
+
+--
+prPointsToGraph :: Info -> Context -> AnalysisState -> Solution -> IO ()
+prPointsToGraph info initialcontext state solution = do
+  putStrLn "Points-to graph: "
+  return ()
+  
