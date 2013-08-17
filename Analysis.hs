@@ -301,8 +301,9 @@ solveOne (C_assign (AnnoArrayType aty x) (AnnoType _ y)) sol =
 solveOne (C_assign (AnnoType "null" x1) (AnnoArrayType aty2 x2)) sol = 
   solveOne (C_var x1 x2) sol
 solveOne (C_assign (AnnoArrayType aty1 x1) (AnnoArrayType aty2 x2)) sol = 
-  solveOne (C_assign aty1 aty2)
-  (solveOne (C_var x1 x2) sol)
+  solveOne (C_assign aty1 aty2) -- TODO: Array element types are bidirectional.
+  (solveOne (C_assign aty2 aty1) 
+   (solveOne (C_var x1 x2) sol))
 solveOne (C_effect eff1 effvar2) (cenv,eenv) =
   assignEff (getEff eenv eff1) effvar2 (cenv,eenv)
 solveOne (C_mtype atys1 (EffVar effvar1) aty1 atys2 (EffVar effvar2) aty2) sol = 
@@ -1638,7 +1639,9 @@ mkActionExpr (New c es label) = do
   where
     actionNew :: TypeName -> [ActionExpr] -> Label -> ActionExpr
     actionNew c actionexps label typingenv typingctx info context = do
-      atyeffs <- mapM (\actionexp -> actionexp typingenv typingctx info context) actionexps
+      atyeffs <- mapM (\actionexp 
+                       -> actionexp typingenv typingctx info context) 
+                 actionexps
       let (atys,effs) = unzip atyeffs
       cty     <- mkAnnoType c
       effVar  <- newEffVar
@@ -1648,7 +1651,7 @@ mkActionExpr (New c es label) = do
       let (cname,m,id) = 
             case typingctx of
               (cname,_,_,Just (m,id)) -> (cname, m, id)
-              _                       -> error "mkActionExpr: New: unexpected typingctx"
+              _ -> error "mkActionExpr: New: unexpected typingctx"
               
       -- uniqueContext <- putAllocTableEntry context (cname, m, id, label, NoRefinement) c None
       let entry = (cname, m, id, label, NoRefinement)

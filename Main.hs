@@ -73,6 +73,21 @@ tc_array =  map ("./sample/array/" ++)
                "Array.java"
              ]            
             
+tc_array1 =  map ("./sample/array/" ++)
+             [ 
+               "Array1.java"
+             ]            
+
+tc_array2 =  map ("./sample/array/" ++)
+             [ 
+               "Array2.java"
+             ]            
+
+tc_array3 =  map ("./sample/array/" ++)
+             [ 
+               "Array3.java"
+             ]            
+
 tc_visitor = map ("./sample/visitorpattern/" ++)
             [
               "AbstractNode.java",
@@ -97,6 +112,30 @@ tc_visitor = map ("./sample/visitorpattern/" ++)
               "lib/IteratorClass.java"
             ]
              
+tc_visitor1 = map ("./sample/littlevisitor/" ++)
+            [
+              "AbstractNode.java",
+              "Class.java",
+              "CompilationUnit.java",
+              "Compiler.java",
+              "Field.java",
+              "Method.java",
+              "StatementCompound.java",
+              "StatementIf.java",
+              "Statement.java",
+              "StatementSimple.java",
+              "StatementWhile.java",
+              "client/Client.java",
+              "client/PrettyPrinter.java",
+              "visitor/IVisitable.java",
+              "visitor/IVisitor.java",
+              "visitor/VisitorAdapter.java",
+              "lib/Set.java",
+              "lib/HashSet.java",
+              "lib/Iterator.java",
+              "lib/IteratorClass.java"
+            ]
+
 tc_tosem0 = map ("./sample/tosem/" ++)             
            [
              "Pointsto.java"
