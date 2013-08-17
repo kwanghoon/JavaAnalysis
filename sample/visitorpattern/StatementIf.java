@@ -1,16 +1,16 @@
 
-class StatementIf extends StatementCompound {
-	// StatementIf(String aName) {
-	// 	super(aName);
-	// }
+public class StatementIf extends StatementCompound {
+	public StatementIf(final String aName) {
+	 	super(aName);
+	}
 	/**
 	 * Some particular behaviour.
 	 */
-	void accept(IVisitor aVisitor) {
+	public void accept(final IVisitor aVisitor) {
 		aVisitor.open(this);
-		Iterator iterator = this.getStatements();
+		final Iterator iterator = this.getStatements();
 		while (iterator.hasNext()) {
-			Statement statement = (Statement) iterator.next();
+			final Statement statement = (Statement) iterator.next();
 			statement.accept(aVisitor);
 		}
 		aVisitor.close(this);

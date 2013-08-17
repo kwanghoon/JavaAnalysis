@@ -5,6 +5,7 @@ import AST
 objClass = "Object"
 strClass = "String"
 
+basicClasses :: UserClasses
 basicClasses = -- TODO: extension
   [ (strClass,   [java_class]),
     (objClass,   [java_class]),
@@ -13,17 +14,20 @@ basicClasses = -- TODO: extension
     ("Iterator", [java_class])  -- interface?
   ]
 
+basicInheritance :: Inheritance
 basicInheritance =  -- TODO: extension
   [ (strClass, objClass),
     ("HashSet", "Set")
   ]
 
+basicFields :: Fields
 basicFields = -- TODO: extension
   [
     ("System", [(TypeName "PrintStream", "out", [static])])
   ]
   
 
+basicMtypes :: Mtypes
 basicMtypes = -- TODO: extension  
   (\x -> concat 
          [ [ (c, m, id, argtys, retty, attrs, args, maybestmt) 
@@ -31,6 +35,14 @@ basicMtypes = -- TODO: extension
              <- zip mtypesPerClass [1..] ] 
          | mtypesPerClass <- x ] )
   [ 
+    [ 
+      ("Object", "getClass", [], TypeName "Class<?>", [], [], Nothing)
+    ],
+    
+    [
+      ("Class<?>", "getName", [], TypeName "String", [], [], Nothing)
+    ],
+    
     [
       ("Set", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
       ("Set", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
@@ -62,7 +74,8 @@ basicMtypes = -- TODO: extension
     ],
 
     [
-      ("PrintStream", "println", [TypeName "String"], TypeName "void", [static], [], Nothing)
+      ("PrintStream", "println", [TypeName "String"], TypeName "void", [static], [], Nothing),
+      ("PrintStream", "println", [TypeName "StringBuilder"], TypeName "void", [static], [], Nothing)
     ]
   ]
 

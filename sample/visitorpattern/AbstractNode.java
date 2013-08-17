@@ -1,15 +1,11 @@
 
-class AbstractNode implements IVisitable {
-    String name;
-    AbstractNode(String aName) {
+public abstract class AbstractNode implements IVisitable {
+    private final String name;
+    public AbstractNode(final String aName) {
  	this.name = aName;
     }
 
-    void setName(String aName) {
-	this.name = aName;
-    }
-
-    String getName() {
+    public String getName() {
 	return this.name;
     }
 }

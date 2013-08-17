@@ -1,10 +1,10 @@
 
-class Field extends AbstractNode {
-	// Field(String aName) {
-	// 	super(aName);
-	// }
+public class Field extends AbstractNode {
+	public Field(final String aName) {
+		super(aName);
+	}
 
-	void accept(IVisitor aVisitor) {
+	public void accept(final IVisitor aVisitor) {
 		aVisitor.visit(this);
 	}
 

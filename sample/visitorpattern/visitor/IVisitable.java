@@ -1,4 +1,4 @@
 
-interface IVisitable {
-    void accept(IVisitor aVisitor);
+public interface IVisitable {
+    void accept(final IVisitor aVisitor);
 }

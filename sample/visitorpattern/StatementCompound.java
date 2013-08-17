@@ -1,41 +1,37 @@
 
-class StatementCompound extends Statement {
-    Set statements; // = new HashSet();
+public abstract class StatementCompound extends Statement {
+    private final Set statements = new HashSet();
 
-    void initStatements() {
-	statements = new HashSet();
+    public StatementCompound(final String aName) {
+	super(aName);
     }
 
-	// StatementCompound(String aName) {
-	// 	super(aName);
-	// }
-
-	void addStatement(Statement aStatement) {
-		this.statements.add(aStatement);
-	}
-	void removeStatement(Statement aStatement) {
-		this.statements.remove(aStatement);
-	}
-	Statement getStatement(String aName) {
-		Iterator iterator = this.statements.iterator();
-		while (iterator.hasNext()) {
-			Statement statement = (Statement) iterator.next();
-			if (statement.getName().equals(aName)) {
-				return statement;
-			}
+    public void addStatement(final Statement aStatement) {
+	this.statements.add(aStatement);
+    }
+    public void removeStatement(final Statement aStatement) {
+	this.statements.remove(aStatement);
+    }
+    public Statement getStatement(final String aName) {
+	final Iterator iterator = this.statements.iterator();
+	while (iterator.hasNext()) {
+		final Statement statement = (Statement) iterator.next();
+		if (statement.getName().equals(aName)) {
+			return statement;
 		}
-		return null;
 	}
-	Iterator getStatements() {
-		return this.statements.iterator();
+	return null;
+    }
+    public Iterator getStatements() {
+	return this.statements.iterator();
+    }
+    public void accept(final IVisitor aVisitor) {
+	aVisitor.open(this);
+	final Iterator iterator = this.statements.iterator();
+	while (iterator.hasNext()) {
+		final Statement statement = (Statement) iterator.next();
+		statement.accept(aVisitor);
 	}
-	void accept(IVisitor aVisitor) {
-		aVisitor.open(this);
-		Iterator iterator = this.statements.iterator();
-		while (iterator.hasNext()) {
-			Statement statement = (Statement) iterator.next();
-			statement.accept(aVisitor);
-		}
-		aVisitor.close(this);
-	}
+	aVisitor.close(this);
+    }
 }

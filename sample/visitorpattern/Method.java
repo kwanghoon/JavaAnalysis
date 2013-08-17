@@ -1,24 +1,21 @@
 
-class Method extends AbstractNode {
-    private Set statements; // = new HashSet();
-    void initStatements() {
-	statements = new HashSet();
-    }
+public class Method extends AbstractNode {
+    private Set statements = new HashSet();
 
-    // Method(String aName) {
-    // 	super(aName);
-    // }
-    void addStatement(Statement aStatement) {
+    public Method(final String aName) {
+    	super(aName);
+    }
+    public void addStatement(final Statement aStatement) {
 	this.statements.add(aStatement);
     }
-    void removeStatement(Statement aStatement) {
+    public void removeStatement(final Statement aStatement) {
 	this.statements.remove(aStatement);
     }
-    void accept(IVisitor aVisitor) {
+    public void accept(final IVisitor aVisitor) {
 	aVisitor.open(this);
-	Iterator iterator = this.statements.iterator();
+	final Iterator iterator = this.statements.iterator();
 	while (iterator.hasNext()) {
-		Statement statement = (Statement) iterator.next();
+		final Statement statement = (Statement) iterator.next();
 		statement.accept(aVisitor);
 	}
 	aVisitor.close(this);

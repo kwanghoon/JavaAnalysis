@@ -1,43 +1,43 @@
 
-// Several things left to do!!
+// TODO: Need to support Object.getClass(), Class.getName()
 
-class PrettyPrinter extends VisitorAdapter {
-	int temporaryIndentation;
-	StringBuilder temporaryOutput = new StringBuilder();
+public class PrettyPrinter extends VisitorAdapter {
+	private int temporaryIndentation;
+	private final StringBuilder temporaryOutput = new StringBuilder();
 
-	void close(AbstractNode aNode) {
+	private void close(final AbstractNode aNode) {
 		this.temporaryOutput.setLength(0);
 		for (int i = 0; i < this.temporaryIndentation; i++) {
 			this.temporaryOutput.append('\t');
 		}
 		this.temporaryOutput.append("(Closed)");
 
-		System.out.println(this.temporaryOutput.toString()); // Added .toString
+		System.out.println(this.temporaryOutput);
 	}
-	void close(Class aClass) {
+	public void close(final Class aClass) {
 		this.close((AbstractNode) aClass);
 		this.temporaryIndentation--;
 	}
-	void close(CompilationUnit aCompilationUnit) {
+	public void close(final CompilationUnit aCompilationUnit) {
 		this.close((AbstractNode) aCompilationUnit);
 		this.temporaryIndentation--;
 	}
-	void close(Method aMethod) {
+	public void close(final Method aMethod) {
 		this.close((AbstractNode) aMethod);
 		this.temporaryIndentation--;
 	}
-	void close(StatementCompound aStatementCompound) {
+	public void close(final StatementCompound aStatementCompound) {
 		this.close((AbstractNode) aStatementCompound);
 		this.temporaryIndentation--;
 	}
-	void close(StatementIf aStatementIf) {
+	public void close(final StatementIf aStatementIf) {
 		this.close((AbstractNode) aStatementIf);
 		this.temporaryIndentation--;
 	}
-	private void open(AbstractNode aNode) {
+	private void open(final AbstractNode aNode) {
 		this.open(aNode, null);
 	}
-	private void open(AbstractNode aNode, String anAdditionalMessage) {
+	private void open(final AbstractNode aNode, final String anAdditionalMessage) {
 		this.temporaryOutput.setLength(0);
 		for (int i = 0; i < this.temporaryIndentation; i++) {
 			this.temporaryOutput.append('\t');
@@ -45,38 +45,37 @@ class PrettyPrinter extends VisitorAdapter {
 		this.temporaryOutput.append("Visiting ");
 		this.temporaryOutput.append(aNode.getName());
 		this.temporaryOutput.append(" of type ");
-		CompilationUnit aCompilationUnit = (CompilationUnit)aNode; // Added this statement
-		this.temporaryOutput.append(aCompilationUnit.getClass("").getName()); // Modified aNode to be aCompilationUnit, and added ""
+		this.temporaryOutput.append(aNode.getClass().getName());
 		if (anAdditionalMessage != null) {
 			this.temporaryOutput.append(anAdditionalMessage);
 		}
 
-		System.out.println(this.temporaryOutput.toString()); // Added .toString()
+		System.out.println(this.temporaryOutput);
 	}
-	void open(Class aClass) {
+	public void open(final Class aClass) {
 		this.open((AbstractNode) aClass);
 		this.temporaryIndentation++;
 	}
-	void open(CompilationUnit aCompilationUnit) {
+	public void open(final CompilationUnit aCompilationUnit) {
 		this.open((AbstractNode) aCompilationUnit);
 		this.temporaryIndentation++;
 	}
-	void open(Method aMethod) {
+	public void open(final Method aMethod) {
 		this.open((AbstractNode) aMethod);
 		this.temporaryIndentation++;
 	}
-	void open(StatementCompound aStatementCompound) {
+	public void open(final StatementCompound aStatementCompound) {
 		this.open((AbstractNode) aStatementCompound);
 		this.temporaryIndentation++;
 	}
-	void open(StatementIf aStatementIf) {
+	public void open(final StatementIf aStatementIf) {
 		this.open((AbstractNode) aStatementIf, " (this is open(StatementIf))");
 		this.temporaryIndentation++;
 	}
-	void visit(Field aField) {
+	public void visit(final Field aField) {
 		this.open((AbstractNode) aField);
 	}
-	void visit(StatementSimple aStatementEmpty) {
+	public void visit(final StatementSimple aStatementEmpty) {
 		this.open((AbstractNode) aStatementEmpty);
 	}
 }

@@ -1,15 +1,15 @@
 
-interface IVisitor {
-    void close(Class class1);
-    void close(CompilationUnit compilationUnit);
-    void close(Method method);
-    void close(StatementCompound statementCompound);
-    void close(StatementIf aStatementIf);
-    void open(Class class1);
-    void open(CompilationUnit compilationUnit);
-    void open(Method method);
-    void open(StatementCompound statementCompound);
-    void open(StatementIf aStatementIf);
-    void visit(Field field);
-    void visit(StatementSimple statementEmpty);
+public interface IVisitor {
+    void close(final Class class1);
+    void close(final CompilationUnit compilationUnit);
+    void close(final Method method);
+    void close(final StatementCompound statementCompound);
+    void close(final StatementIf aStatementIf);
+    void open(final Class class1);
+    void open(final CompilationUnit compilationUnit);
+    void open(final Method method);
+    void open(final StatementCompound statementCompound);
+    void open(final StatementIf aStatementIf);
+    void visit(final Field field);
+    void visit(final StatementSimple statementEmpty);
 }

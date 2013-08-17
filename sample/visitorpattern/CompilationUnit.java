@@ -1,35 +1,33 @@
 
-class CompilationUnit extends AbstractNode {
+// TODO: Need to support HashSet and Iterator
+
+public class CompilationUnit extends AbstractNode {
     private Set classes = new HashSet();
 
-    void initClasses() {
-	classes = new HashSet();
-    }
-
-    CompilationUnit(String aName) {
+    public CompilationUnit(final String aName) {
      	super(aName);
     }
-    void addClass(Class aClass) {
+    public void addClass(final Class aClass) {
 	this.classes.add(aClass);
     }
-    void removeClass(Class aClass) {
+    public void removeClass(final Class aClass) {
 	this.classes.remove(aClass);
     }
-    Class getClass(String aName) {
-	Iterator iterator = this.classes.iterator();
+    public Class getClass(final String aName) {
+	final Iterator iterator = this.classes.iterator();
 	while (iterator.hasNext()) {
-		Class aClass = (Class) iterator.next();
+		final Class aClass = (Class) iterator.next();
 		if (aClass.getName().equals(aName)) {
 			return aClass;
 		}
 	}
 	return null;
     }
-    void accept(IVisitor aVisitor) {
+    public void accept(final IVisitor aVisitor) {
 	aVisitor.open(this);
-	Iterator iterator = this.classes.iterator();
+	final Iterator iterator = this.classes.iterator();
 	while (iterator.hasNext()) {
-		Class aClass = (Class) iterator.next();
+		final Class aClass = (Class) iterator.next();
 		aClass.accept(aVisitor);
 	}
 	aVisitor.close(this);

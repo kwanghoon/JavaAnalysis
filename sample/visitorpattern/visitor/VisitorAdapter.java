@@ -1,27 +1,27 @@
 
-class VisitorAdapter implements IVisitor {
-	void close(Class aClass) {
+public abstract class VisitorAdapter implements IVisitor {
+	public void close(final Class aClass) {
 	}
-	void close(CompilationUnit aCompilationUnit) {
+	public void close(final CompilationUnit aCompilationUnit) {
 	}
-	void close(Method aMethod) {
+	public void close(final Method aMethod) {
 	}
-	void close(StatementCompound sStatementCompound) {
+	public void close(final StatementCompound sStatementCompound) {
 	}
-	void close(StatementIf aStatementIf) {
+	public void close(final StatementIf aStatementIf) {
 	}
-	void open(Class aClass) {
+	public void open(final Class aClass) {
 	}
-	void open(CompilationUnit aCompilationUnit) {
+	public void open(final CompilationUnit aCompilationUnit) {
 	}
-	void open(Method aMethod) {
+	public void open(final Method aMethod) {
 	}
-	void open(StatementCompound aStatementCompound) {
+	public void open(final StatementCompound aStatementCompound) {
 	}
-	void open(StatementIf aStatementIf) {
+	public void open(final StatementIf aStatementIf) {
 	}
-	void visit(Field aField) {
+	public void visit(final Field aField) {
 	}
-	void visit(StatementSimple aStatementEmpty) {
+	public void visit(final StatementSimple aStatementEmpty) {
 	}
 }

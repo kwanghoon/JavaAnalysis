@@ -1,41 +1,36 @@
 
-// Need to support while, HashSet, Iterator!
+// TODO: Need to support HashSet and Iterator.
 
-class Class extends AbstractNode {
-    Set methods = new HashSet();
-    Set fields  = new HashSet();
+public class Class extends AbstractNode {
+    private final Set methods = new HashSet();
+    private Set fields  = new HashSet();
 
-    void initMethodsFields() {
-	methods = new HashSet();
-	fields = new HashSet();
-    }
-
-    Class(String aName) {
+    public Class(final String aName) {
      	super(aName);
     }
 
-    void addMethod(Method aMethod) {
+    public void addMethod(final Method aMethod) {
 	this.methods.add(aMethod);
     }
-    void removeMethod(Method aMethod) {
+    public void removeMethod(final Method aMethod) {
 	this.methods.remove(aMethod);
     }
-    void addField(Field aField) {
+    public void addField(final Field aField) {
 	this.fields.add(aField);
     }
-    void removeField(Field aField) {
+    public void removeField(final Field aField) {
 	this.fields.remove(aField);
     }
-    void accept(IVisitor aVisitor) {
+    public void accept(final IVisitor aVisitor) {
 	aVisitor.open(this);
-	Iterator iteratorOnFields = this.fields.iterator();
+	final Iterator iteratorOnFields = this.fields.iterator();
 	while (iteratorOnFields.hasNext()) {
-		Field field = (Field) iteratorOnFields.next();
+		final Field field = (Field) iteratorOnFields.next();
 		field.accept(aVisitor);
 	}
-	Iterator iteratorOnMethods = this.methods.iterator();
+	final Iterator iteratorOnMethods = this.methods.iterator();
 	while (iteratorOnMethods.hasNext()) {
-		Method method = (Method) iteratorOnMethods.next();
+		final Method method = (Method) iteratorOnMethods.next();
 		method.accept(aVisitor);
 	}
 	aVisitor.close(this);

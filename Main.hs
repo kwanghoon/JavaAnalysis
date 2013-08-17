@@ -42,7 +42,8 @@ prElapsedSeconds s e = do
   putStrLn $ show (timeinfloat / 10^12) ++ " seconds in total"
 
 parse arg =           
-  do s <- readFile arg
+  do putStrLn $ "Parsing " ++ arg
+     s <- readFile arg
      return (parseprog . lexer $ s)
           
 mainToks = 

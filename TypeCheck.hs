@@ -233,7 +233,8 @@ tcProgram info program =
 -- tcClass :: Info -> Class -> IO (Maybe String)
 tcClass :: Info -> Class -> ErrorT TCError IO Class
 tcClass info (Class attrs n p is mdecls) =
-  do mdecls1 <- mapM (tcMdecl info (n, p, is)) mdecls
+  do liftIO $ putStrLn ("Typechecking " ++ n)
+     mdecls1 <- mapM (tcMdecl info (n, p, is)) mdecls
      return $ (Class attrs n p is mdecls1)
 tcClass info (Interface n is mdecls) =
   -- TODO: all abstract?
@@ -318,6 +319,10 @@ lookupMtype info (ArrayTypeName c) m argtys =
   Nothing  -- No method is available for arrays
   
 lookupMtype' info c m argtys =
+  -- lookupMtype'' info c m argtys 
+  -- (getMtypes info ++ basicMtypes) 
+  -- (getInheritance info ++ basicInheritance)
+  
   if isUserClass c (getUserClasses info) || 
      isUserInterface c (getUserClasses info)
      then lookupMtype'' info c m argtys (getMtypes info) (getInheritance info)
@@ -338,7 +343,7 @@ lookupMtype''' info c m argtys inheritance =
   case filter isJust 
        [ lookupMtype' info c2 m argtys | (c1,c2) <- inheritance, c==c1 ]
   of 
-    []   -> Nothing -- No such field
+    []   -> Nothing -- No such method
     [mt] -> mt
     mts  -> chooseMostSpecificMtype info (map fromJust mts)
     
@@ -462,7 +467,7 @@ tcExp info env (Invoke e m es tyann) =
      let (argts, retty, attrs) = fromJust maybemtype
          
      if isNothing maybemtype 
-       then throwError ("tcExp: method not found: " ++ m ++
+       then do throwError ("tcExp: method not found: " ++ m ++
                         show tys ++ " in " ++ show ty ++
                         ": " ++ show (Invoke e m es tyann))
        else return $ (retty, Invoke expr m exprs (Just retty))

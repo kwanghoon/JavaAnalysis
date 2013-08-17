@@ -1,13 +1,13 @@
 
-class Compiler {
-    CompilationUnit compile() {
+public class Compiler {
+    public CompilationUnit compile() {
 	// For example
-	CompilationUnit compilationUnit = new CompilationUnit("A.java");
+	final CompilationUnit compilationUnit = new CompilationUnit("A.java");
 
-	Class classA = new Class("A");
+	final Class classA = new Class("A");
 	compilationUnit.addClass(classA);
 
-	Method methodFoo = new Method("foo");
+	final Method methodFoo = new Method("foo");
 	classA.addMethod(methodFoo);
 	{
 		Statement statement;
@@ -23,10 +23,10 @@ class Compiler {
 		methodFoo.addStatement(statement);
 	}
 
-	Method methodBar = new Method("bar");
+	final Method methodBar = new Method("bar");
 	classA.addMethod(methodBar);
 
-	Field fieldF = new Field("f");
+	final Field fieldF = new Field("f");
 	classA.addField(fieldF);
 
 	return compilationUnit;
