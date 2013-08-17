@@ -175,3 +175,8 @@ tc_java = map ("./sample/java/" ++)
             "MemberInit.java",
             "Str.java"
           ]         
+
+tc_java1 = map ("./sample/java/" ++)
+          [
+            "Dispatch.java"
+          ]

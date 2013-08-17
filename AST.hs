@@ -31,6 +31,14 @@ getFields      (userClasses, inheritance, fields, mtypes, vtypes) = fields
 getMtypes      (userClasses, inheritance, fields, mtypes, vtypes) = mtypes
 getVtypes      (userClasses, inheritance, fields, mtypes, vtypes) = vtypes
 
+getReflexiveAncestors :: Inheritance -> ClassName -> [ClassName]
+getReflexiveAncestors inheritance c = nub $ c : concat
+  [ c2 : getReflexiveAncestors inheritance c2 | (c1,c2) <- inheritance, c1==c ]
+  
+getMethods :: Mtypes -> ClassName -> Mtypes
+getMethods mtypes c = 
+  [ mtype | mtype@(c1,_,_,_,_,_,_,_) <- mtypes, c==c1 ]
+
 isUserClass c ucs =     
   not $ null $ 
   [ (n,attribs) | (n,attribs) <- ucs, c==n, elem java_class attribs ]

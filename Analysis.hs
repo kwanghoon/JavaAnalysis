@@ -595,32 +595,35 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
   (_,constraints,typingtable,_,_,_) <- get
   let cid = getAnno cty
   let c   = case cty of { AnnoType c _ -> c; _ -> "" }
-  -- let cenv = solve constraints
-  let Set ctxs = lookupCEnv cenv cid
-  -- TODO: any condition on c'?
-  -- let mtypes = [ (matys, maty, meff) 
-  --              | M c' context' m' id' matys maty meff <- typingtable
-  --              , context <- ctxs, context==context' 
-  --              , subType info (TypeName c') (TypeName c)
-  --                && m==m' 
-  --                && subTypes info (map toType atys) (map toType matys)
-  --              ] 
 
-  let maybemtypes = 
+  let Set ctxs = lookupCEnv cenv cid
+
+  let bare_cty  = toType cty
+  let bare_atys = map toType atys 
+  let bare_aty  = toType aty
+      
+  let candidates = 
+        [ (m,tys) | (_,m,_,tys,_,_,_,_) <- concat $
+             map (getMethods (getMtypes info))
+             (getReflexiveAncestors (getInheritance info ++ basicInheritance) c) ]
+      
+  let enummtypes = 
         [ 
-          chooseMostSpecificMtype info
           [ (c', bare_matys, bare_maty, (matys, maty, meff))
           | M c' context' m' id' matys maty meff <- typingtable
           , context==context' 
-          , let bare_atys  = map toType atys 
           , let bare_matys = map toType matys
           , let bare_maty  = toType maty
-          , -- subType info (TypeName c') (TypeName c)  -- TODO: why?
-            m==m' 
+          , m==m' 
             && subTypes info bare_atys bare_matys
+
+            -- filtered by the declared class type
+          , (m',bare_matys) `elem` candidates
           ]
           
         | context <- ctxs ]
+        
+  let maybemtypes =  map (chooseMostSpecificMtype info) enummtypes
         
   let mtypes = [ a | Just a <- maybemtypes ]
       
@@ -628,6 +631,12 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
   -- liftIO $ putStrLn $ show (C_invoke cty m atys eff aty)
   -- liftIO $ putStrLn $ 
   --   show [ C_mtype matys meff maty atys eff aty | (_, _, _, (matys, maty, meff)) <- mtypes ]
+  -- liftIO $ putStrLn $ show $ (getReflexiveAncestors (getInheritance info ++ basicInheritance) c)
+  -- liftIO $ putStrLn $ show $ [ (c, m,tys) | (c,m,_,tys,_,_,_,_) <- concat $ map (getMethods (getMtypes info)) (getReflexiveAncestors (getInheritance info ++ basicInheritance) c) ]
+  -- liftIO $ putStrLn $ show candidates
+  -- liftIO $ putStrLn $ show candidates
+  -- liftIO $ putStrLn $ show enummtypes
+  -- liftIO $ putStrLn $ show maybemtypes
     
   -- liftIO $ putStrLn $ show cenv
   -- liftIO $ putStrLn $ show constraints
@@ -638,29 +647,34 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
 resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   (_,constraints,typingtable,_,_,_) <- get
   let c   = case ty of { TypeName c -> c; _ -> "" }
-  -- let cenv = solve constraints
-  let Set ctxs = Set [emptyContext]
-  -- TODO: any condition on c'?
-  -- let mtypes = [ (matys, maty, meff) 
-  --              | M c' context' m' id' matys maty meff <- typingtable
-  --              , context <- ctxs
-  --              , subType info (TypeName c') (TypeName c)
-  --                && context==context' && m==m' ] 
 
-  let maybemtypes = 
+  let Set ctxs = Set [emptyContext]
+
+  let bare_atys  = map toType atys
+      
+  let candidates = 
+        [ (m,tys) | (_,m,_,tys,_,_,_,_) <- concat $
+             map (getMethods (getMtypes info))
+             (getReflexiveAncestors (getInheritance info ++ basicInheritance) c) ]
+        
+  let enummtypes = 
         [ 
-          chooseMostSpecificMtype info 
           [ (c', bare_matys, bare_maty, (matys, maty, meff)) 
           | M c' context' m' id' matys maty meff <- typingtable
           , context==context'
-          , let bare_atys  = map toType atys
           , let bare_matys = map toType matys
           , let bare_maty  = toType maty
-          , -- subType info (TypeName c') (TypeName c)  -- TODO: why?
-            m==m' 
+          , m==m' 
             && subTypes info bare_atys bare_matys
+            
+            -- subTypes info (TypeName c) (TypeName c') ??
+            
+            -- filtered by the declared class type
+          , (m',bare_matys) `elem` candidates
           ]
         | context <- ctxs ]
+        
+  let maybemtypes = map (chooseMostSpecificMtype info) enummtypes
         
   let mtypes = [ a | Just a <- maybemtypes ] 
 
