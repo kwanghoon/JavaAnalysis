@@ -37,21 +37,34 @@ subMtype info (targs1, tret1) (targs2, tret2) =
   all (True==) [subType info t1 t2 | (t1,t2) <- zip targs2 targs1] &&
   subType info tret1 tret2
   
-chooseMostSpecificMtype :: Eq a => Info -> [([TypeName], TypeName, a)] -> Maybe ([TypeName], TypeName, a)
+chooseMostSpecificMtype :: Eq a => Info -> [(ClassName, [TypeName], TypeName, a)] 
+                           -> Maybe (ClassName, [TypeName], TypeName, a)
 chooseMostSpecificMtype info mtys =
   case mtys1 of
     []    -> Nothing -- Can't determine the most specific mtype
     [mty] -> Just mty
-    mtys  -> returnMtypeIfAllAreTheSame mtys
+    mtys  -> returnMtypeIfAllAreTheSame info mtys
   where
     mtys1 = [ mty | (mty, mtys') <- 
                  [ (mtys !! i, take (i-1) mtys ++ drop (i+1) mtys) 
                  | i <- [0..length mtys-1]],  morespecificthan mty mtys' ]
-    morespecificthan (argty, _, _) mtys =
-      all (True==) [subTypes info argty argty' | (argty',_,_) <- mtys]
+    morespecificthan (_, argty, _, _) mtys =
+      all (True==) [subTypes info argty argty' | (_, argty',_,_) <- mtys]
 
 -- Multiple is the most specific mtype
-returnMtypeIfAllAreTheSame mtys = 
+returnMtypeIfAllAreTheSame info mtys =  -- mtys is not empty.
   case nub mtys of
     [mty] -> Just mty
-    _     -> Nothing
+    mtys' -> chooseOverridingMtype info mtys'
+    
+chooseOverridingMtype info mtys = -- mtys is not empty and has more than two elements.
+  case 
+    [ mty1
+    | mty1@(c1,atys1,aty1,extra1) <- mtys
+    , and [ subType info (TypeName c1) (TypeName c2) 
+          | mty2@(c2,atys2,aty2,extra2) <- mtys, mty1/=mty2 ] ] of
+    
+    [mty] -> Just mty
+    _     -> Nothing 
+             -- error ("chooseOverrideingMtype: possibly multiple inheritance problem: "
+             --        ++ show [ (c,atys,aty) | (c,atys,aty,_) <- mtys])

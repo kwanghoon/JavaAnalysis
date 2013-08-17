@@ -329,7 +329,7 @@ lookupMtype' info c m argtys =
      else lookupMtype'' info c m argtys basicMtypes basicInheritance
 
 lookupMtype'' info c m argtys mtypes inheritance =
-  case [ (argtys', retty, attrs) 
+  case [ (c', argtys', retty, attrs) 
        | (c', m', id', argtys', retty, attrs, _, _) <- mtypes, 
          c == c', 
          m == m',
@@ -355,7 +355,7 @@ lookupKtype info (TypeName "boolean") argtys = Nothing -- TODO: distinguish refe
 lookupKtype info (ArrayTypeName c) argtys = Just [TypeName "int"]
 lookupKtype info (TypeName c) argtys = 
   let maybemtype = lookupKtype' info c c argtys
-      (argtys', retty, attrs) = fromJust maybemtype
+      (_, argtys', retty, attrs) = fromJust maybemtype
   in  if isNothing maybemtype
       then Just []     -- no arguments are required for this constructor
       else Just argtys'
@@ -367,7 +367,7 @@ lookupKtype' info c m argtys =
      else lookupKtype'' info c m argtys basicMtypes basicInheritance
 
 lookupKtype'' info c m argtys mtypes inheritance =
-  case [ (argtys', retty, attrs) 
+  case [ (c', argtys', retty, attrs) 
        | (c', m', id', argtys', retty, attrs, _, _) <- mtypes, 
          c == c', 
          m == m',
@@ -464,7 +464,7 @@ tcExp info env (Invoke e m es tyann) =
      tyexprs    <- mapM (tcExp info env) es
      let (tys, exprs) = unzip tyexprs
      let maybemtype = lookupMtype info ty m tys
-     let (argts, retty, attrs) = fromJust maybemtype
+     let (_, argts, retty, attrs) = fromJust maybemtype
          
      if isNothing maybemtype 
        then do throwError ("tcExp: method not found: " ++ m ++
@@ -476,7 +476,7 @@ tcExp info env (StaticInvoke c m es tyann) =
   do tyexprs <- mapM (tcExp info env) es
      let (tys,exprs) = unzip tyexprs
      let maybemtype = lookupMtype info c m tys
-     let (argts, retty, attrs) = fromJust maybemtype
+     let (_, argts, retty, attrs) = fromJust maybemtype
          
      if elem static attrs == False
        then throwError ("tcExp: not static method: " ++

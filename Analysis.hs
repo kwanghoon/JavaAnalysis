@@ -301,7 +301,8 @@ solveOne (C_assign (AnnoArrayType aty x) (AnnoType _ y)) sol =
 solveOne (C_assign (AnnoType "null" x1) (AnnoArrayType aty2 x2)) sol = 
   solveOne (C_var x1 x2) sol
 solveOne (C_assign (AnnoArrayType aty1 x1) (AnnoArrayType aty2 x2)) sol = 
-  solveOne (C_var x1 x2) sol
+  solveOne (C_assign aty1 aty2)
+  (solveOne (C_var x1 x2) sol)
 solveOne (C_effect eff1 effvar2) (cenv,eenv) =
   assignEff (getEff eenv eff1) effvar2 (cenv,eenv)
 solveOne (C_mtype atys1 (EffVar effvar1) aty1 atys2 (EffVar effvar2) aty2) sol = 
@@ -607,7 +608,7 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
   let maybemtypes = 
         [ 
           chooseMostSpecificMtype info
-          [ (bare_matys, bare_maty, (matys, maty, meff))
+          [ (c', bare_matys, bare_maty, (matys, maty, meff))
           | M c' context' m' id' matys maty meff <- typingtable
           , context==context' 
           , let bare_atys  = map toType atys 
@@ -621,15 +622,17 @@ resolveConstraint info (cenv,eenv) (C_invoke cty m atys eff aty) = do
         | context <- ctxs ]
         
   let mtypes = [ a | Just a <- maybemtypes ]
-
+      
   -- liftIO $ putStrLn $ "resolveConstraint:"
   -- liftIO $ putStrLn $ show (C_invoke cty m atys eff aty)
-  -- liftIO $ putStrLn $ show [ C_mtype matys meff maty atys eff aty | (matys, maty, meff) <- mtypes ]
+  -- liftIO $ putStrLn $ 
+  --   show [ C_mtype matys meff maty atys eff aty | (_, _, _, (matys, maty, meff)) <- mtypes ]
+    
   -- liftIO $ putStrLn $ show cenv
   -- liftIO $ putStrLn $ show constraints
 
   return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
-    [ C_mtype matys meff maty atys eff aty | (_, _, (matys, maty, meff)) <- mtypes ]
+    [ C_mtype matys meff maty atys eff aty | (_, _, _, (matys, maty, meff)) <- mtypes ]
     
 resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   (_,constraints,typingtable,_,_,_) <- get
@@ -646,7 +649,7 @@ resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   let maybemtypes = 
         [ 
           chooseMostSpecificMtype info 
-          [ (bare_matys, bare_maty, (matys, maty, meff)) 
+          [ (c', bare_matys, bare_maty, (matys, maty, meff)) 
           | M c' context' m' id' matys maty meff <- typingtable
           , context==context'
           , let bare_atys  = map toType atys
@@ -667,7 +670,7 @@ resolveConstraint info (cenv,eenv) (C_staticinvoke ty m atys eff aty) = do
   -- liftIO $ putStrLn $ show constraints
 
   return $ {- [ C_invoke cty m atys eff aty ] ++ -} 
-    [ C_mtype matys meff maty atys eff aty | (_,_,(matys, maty, meff)) <- mtypes ]
+    [ C_mtype matys meff maty atys eff aty | (_, _,_,(matys, maty, meff)) <- mtypes ]
 
 resolveConstraint info (cenv,eenv) (C_activation aty context allocloc effid) = do
   (_,constraints,typingtable,alloctable,_,_) <- get

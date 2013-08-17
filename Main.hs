@@ -90,7 +90,11 @@ tc_visitor = map ("./sample/visitorpattern/" ++)
               "client/PrettyPrinter.java",
               "visitor/IVisitable.java",
               "visitor/IVisitor.java",
-              "visitor/VisitorAdapter.java"
+              "visitor/VisitorAdapter.java",
+              "lib/Set.java",
+              "lib/HashSet.java",
+              "lib/Iterator.java",
+              "lib/IteratorClass.java"
             ]
              
 tc_tosem0 = map ("./sample/tosem/" ++)             

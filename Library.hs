@@ -43,23 +43,23 @@ basicMtypes = -- TODO: extension
       ("Class<?>", "getName", [], TypeName "String", [], [], Nothing)
     ],
     
-    [
-      ("Set", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
-      ("Set", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
-      ("Set", "iterator", [], TypeName "Iterator", [], [], Nothing)
-    ],
+    -- [
+    --   ("Set", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+    --   ("Set", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+    --   ("Set", "iterator", [], TypeName "Iterator", [], [], Nothing)
+    -- ],
     
-    [
-      ("HashSet", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
-      ("HashSet", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
-      ("HashSet", "iterator", [], TypeName "Iterator", [], [], Nothing)
-    ],
+    -- [
+    --   ("HashSet", "add", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+    --   ("HashSet", "remove", [TypeName "Object"], TypeName "boolean", [], [], Nothing),
+    --   ("HashSet", "iterator", [], TypeName "Iterator", [], [], Nothing)
+    -- ],
     
-    [
-      ("Iterator", "hasNext", [], TypeName "boolean", [], [], Nothing),
-      ("Iterator", "next", [], TypeName "Object", [], [], Nothing),
-      ("Iterator", "remove", [], TypeName "void", [], [], Nothing)
-    ],
+    -- [
+    --   ("Iterator", "hasNext", [], TypeName "boolean", [], [], Nothing),
+    --   ("Iterator", "next", [], TypeName "Object", [], [], Nothing),
+    --   ("Iterator", "remove", [], TypeName "void", [], [], Nothing)
+    -- ],
     
     [
       ("StringBuilder", "StringBuilder", [], TypeName "StringBuilder", [], [], Nothing),
