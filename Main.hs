@@ -112,7 +112,7 @@ tc_visitor = map ("./sample/visitorpattern/" ++)
               "lib/IteratorClass.java"
             ]
              
-tc_visitor1 = map ("./sample/littlevisitor/" ++)
+tc_visitor1 = map ("./sample/visitorpatternwithproblem/" ++)
             [
               "AbstractNode.java",
               "Class.java",
