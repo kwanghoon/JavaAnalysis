@@ -9,7 +9,7 @@ class X {
 	this.f = r;
     }
 
-    static void main() {
+    public static void main() {
 	X p = new X();
 	Y q = new Y();
 	p.set(q);

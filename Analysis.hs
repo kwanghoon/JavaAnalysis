@@ -100,17 +100,17 @@ unionType :: Info -> AnnoType -> AnnoType -> StateT AnalysisState IO AnnoType
 unionType info (AnnoType c1 id1) (AnnoType c2 id2) 
   | c1 == "null" = return (AnnoType c2 id2)
   | c1 == c2 && id1 == id2 = return (AnnoType c1 id1)
-  | c1 == c2 && id1 /= id2 = do
+  | c1 == c2 && id1 /= id2 = do       -- CODE REVIEW: Duplicate code
     id <- newId
     putConstraint (C_var id1 id)
     putConstraint (C_var id2 id)
     return (AnnoType c1 id)
-  | subType info (TypeName c1) (TypeName c2) = do
+  | subType info (TypeName c1) (TypeName c2) = do  
     id <- newId
     putConstraint (C_var id1 id)
     putConstraint (C_var id2 id)
     return (AnnoType c2 id)
-  | subType info (TypeName c2) (TypeName c1) = do
+  | subType info (TypeName c2) (TypeName c1) = do  
     id <- newId
     putConstraint (C_var id1 id)
     putConstraint (C_var id2 id)
@@ -435,8 +435,8 @@ unionTyEnv info ((n,aty):tyenv1) ((m,bty):tyenv2)
     tyenv <- unionTyEnv info tyenv1 tyenv2
     return ((n,ty):tyenv)
   | otherwise = do
-    tyenv  <- unionTyEnv info ((n,aty):tyenv1) tyenv2
-    tyenv' <- unionTyEnv info [(m,bty)] tyenv
+    tyenv  <- unionTyEnv info ((n,aty):tyenv1) tyenv2  -- CODE REVIEW: Inefficient
+    tyenv' <- unionTyEnv info [(m,bty)] tyenv          -- CODE REVIEW: 
     return tyenv'
     
 domain :: TypingEnv -> [Name]    
@@ -1251,7 +1251,7 @@ mkActionProgram info program = do
 mkActionClass :: Info -> Class -> IO ActionLookupTable
 mkActionClass info (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
-  actionvars     <- mkActionVar (n, p, is) (getVtypes info)
+  actionvars     <- mkActionVar (n, p, is) (getVtypes info) -- CODE REVIEW: Need to move this to mkActionProgram before mkActionClass is called for each class!
   actionlookuptable <- mapM compatibleClass 
                        $ wrapFieldInit (concat actionmethodss) actionvars
   return actionlookuptable 
@@ -1438,7 +1438,7 @@ mkActionMDecl (n, p, is) (FieldDecl attrs ty f id maybee) = do
       nullty <- mkAnnoType (TypeName "null")
       mkaction'' nullty typingctx info context
     mkaction' (Just actionexpr) typingctx info context = do
-      (aty,eff) <- actionexpr [] typingctx info context -- TODO: effect?
+      (aty,eff) <- actionexpr [] typingctx info context -- TODO: effect? Effect of constructors of this class!
       mkaction'' aty typingctx info context
       
     mkaction'' aty typingctx info context = do
@@ -1781,7 +1781,7 @@ mkActionExpr (Invoke e m es maybety) = do
       aty         <- mkAnnoType ty
       effm        <- newEffVar
       let (atyes,effes) = unzip atyeffes
-      let id            = getAnno aty
+      -- let id            = getAnno aty  -- CODE REVIEW: Unused
       let eff           = foldr EffUnion effe effes
           
       -- [TEST: resolveConstraint function]
@@ -1929,7 +1929,7 @@ mkActionExpr (Prim n tys es label) = do
       
       _ <- if n /= "primStartActivity" then return () 
            else do
-                let id = head (reverse context)
+                -- let id = head (reverse context) -- Code Review: Unused
                 let aintentty = head atyes
                 putConstraint (C_activation aintentty context allocloc effVarId)
 
@@ -1941,8 +1941,9 @@ mkActionExpr (Prim n tys es label) = do
       return (aty, EffUnion eff eff_android)
           
     actionprim'' actiones atyeffs typingenv typingctx info context = do 
+      let (atyes,effes) = unzip atyeffs  -- BUGFIX:
       aty <- mkAnnoType (TypeName "boolean")
-      return (aty, noEffect)
+      return (aty, foldr EffUnion noEffect effes)
 
 actionConst ty typingenv typingctx info context = do
   aty <- mkAnnoType ty

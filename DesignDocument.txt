@@ -1,0 +1,554 @@
+
+Java 분석기 설계 메모
+ - 최광훈
+ - 2013.10.3
+
+
+Analysis State
+ - (constraints, typing table, allocation table, allocated objects)
+
+Action Table
+ - [ (ActionIdentifer, ActionMember) ]
+
+ - ActionIdentifier 
+     ::= (C,m,id) | (C,f,id) | (C, OPT (m,id),x,id) | (primname, id)
+
+ - ActionMember
+     ::= Info -> Context -> Analysis State
+
+ - ActionStmt
+     ::= TypingEnv -> TypingCtx -> Info -> Context -> (Analysis State, TypingEnv, Effect)
+
+ - ActionExpr
+     ::= TypingEnv -> TypingCtx -> Info -> Context -> (Analysis State, C{X}, Effect)
+
+Typing Table
+ - F(C, context, f, id) = D{X}
+ - M(C, context, m, id) = (D1{X1}, ..., Dn{Xn}) -- effect --> E{X}
+ - V(C, context, OPT (m,id), x, id) = D{X}
+ - P(primname, id) = (D1{X1}, ..., Dn{Xn}) -- effect --> D{X}
+
+Allocation Label Table
+ - id |-> (C, m, id, label, OPT C, type name, info)
+ - info ::= None | Lit String | Unknown Literal
+
+Allocated Objects
+ - (context, annotype)
+
+Constraints
+ - { context1, ..., contextk } \subseteq X
+ - Xi \subseteq Xj
+
+ - C{X}.f <: D{Z}       ... read an instance field
+ - C.f    <: D{Z}       ... read a static field
+
+ - C{X}   <: D{Z}.f     ... assign to an instance field
+ - C{X}   <: D.f        ... assign to a static field
+
+ - C{X}   <: D{Z}       ... variable-to-variable assign  (Not mandatory)
+
+ - C{X}.m <: (D1{X1}, ..., Dn{Xn}) -- effect --> E{X}
+ - C.m    <: (D1{X1}, ..., Dn{Xn}) -- effect --> E{X}
+
+ - effect \subseteq effX
+
+ - (C1{X1}, ..., Cn{Xn}) -- effect1 --> E1{Xn+1}         (Not mandatory)
+     <: (D1{Y1}, ..., Dm{Ym}) -- effect2 --> E2{Ym+1} 
+
+ - Intent{X} @ (context, (C, m, id, label, OPT C)) \subseteq effX
+
+
+Info
+
+ - 사용자 정의 클래스 목록과 속성
+ - 상속 트리
+ - 필드:    [ (C, [(ty, f, attributes)]) ]
+ - 메써드:  [ (C, m, id, argtys, retty, attributes, xs, [ stmt ] ) ]
+ - 변수:   [ (C, (m, id), x, id, ty) ]
+
+[알고리즘]
+
+1. 준비
+
+ - Java 타입체킹을 통해 info를 얻음
+ - 초기 컨텍스트
+    Java 프로그램의 경우 [],
+    Android 프로그램의 경우 시작 activity를 생성한 플랫폼 위치 [ r_{android,Main} ]
+ - 초기 객체 할당 테이블 
+    Android 프로그램의 경우에 시작 activity를 생성한 위치에 대한 테이블 항목 추가
+ - 할당한 객체 목록 []
+
+ - 프로그램에 대한 Action 목록을 만듬
+
+2. 초기화 및 반복
+
+ - 주어진 context에 대해 모든 호환되는 Action을 실행하여
+   2.1 객체 생성 위치(allocation table)와 새로 생성된 객체를 (새로운 context) 모으고
+   2.2 제약식을 생성하고 해를 구한다.
+   2.3 해를 구하는 과정에서 새로 객체가 생성되면 2.1부터 다시 반복한다.
+
+ - Java 프로그램의 경우 제약식에 새로운 context가 생성되는 경우는 없고
+   Android 프로그램의 경우 C_Activation 제약식을 풀면 새로운 context가 생성될 수 있다.
+
+3. 반복 종료
+
+ - 주어진 제약식의 해를 F, M, V 타이핑에 대입
+
+
+
+[식]
+
+ - (var)
+   tyenv, tyctx, info, context |- x : (tyenv x, noEffect) 
+               => nothing
+
+ - (field)
+   ty => aty
+   tyenv, tyctx, info, context |- e : (aty_e, eff_e)
+   ----------------------------------------------------------------
+   tyenv, tyctx, info, context |- e.f ty : (aty, eff_e) 
+               => { aty_e.f <: aty }
+
+ - (static field)
+   ty => aty
+   -------------------------------------------------------------------------
+   tyenv, tyctx, info, context |- C.f ty : (aty, noEffect) 
+               => { C.f <: aty }
+
+ - (new)
+   effVar fresh
+   C => C{X} 
+   tyctx = (cname, P, IS, m, id)
+   entry = (cname, m, id, label)
+   newcontext = context (+) entry 
+   tyenv, tyctx, info, context |- ei : (aty_ei, eff_ei) => constraints_i
+   -------------------------------------------------------------------------
+   tyenv, tyctx, info, context |- new C(e1,...,ek) label 
+    : ( C{X}, Ui=1,k.ei U effVar ) 
+       => C가 배열 타입이면 { } 아니면 
+            {  C{X}.C <: (aty_e1, ..., aty_ek) -- effVar --> C{X}  }
+          U {  { newcontext } \subseteq X  }
+       => entry  U  Allocation Table
+       => ( newcontext, C{X} )  U  Allocated Objects
+
+ - (assignVar) x = e
+
+   tyenv x = aty_x
+   tyenv, tyctx, info, context |- e : ( aty_e, eff_e)
+   ----------------------------------------------------------------
+   tyenv, tyctx, info, context |- x = e : ( void{},  eff_e)
+       => { aty_e <: aty_x }
+
+ - (assignField) e1.f = e2
+
+   tyenv, tyctx, info, context |- e1 : (aty_e1, eff_e1)   
+   tyenv, tyctx, info, context |- e2 : (aty_e2, eff_e2)   
+   ----------------------------------------------------------------------
+   tyenv, tyctx, info, context |- e1.f = e2 : ( void{},  eff_e1 U eff_e1)
+       => { aty_e2 <: aty_e1.f }
+
+ - (assignStaticField) C.f = e
+
+   tyenv, tyctx, info, context |- e : (aty_e, eff_e)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- C.f = e : ( void{}, eff_e)
+       => { aty_e <: C.f }
+
+ - (assignArray) earr[eidx] = e
+
+   aty_arr = aty_elem{X}
+   tyenv, tyctx, info, context |- earr : ( aty_arr, eff_arr)
+   tyenv, tyctx, info, context |- eidx : ( aty_idx, eff_idx)
+   tyenv, tyctx, info, context |- earr : ( aty_e, eff_e)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- earr[eidx] = e 
+     : ( void{}, eff_arr U eff_idx U eff_e )
+       => { aty_e <: aty_elem }
+
+ - (cast) 
+
+   cast C aty => cty
+   tyenv, tyctx, info, context |- e : (aty, eff)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- (C)e : (cty, eff)
+
+
+   Def.
+   cast C   D{X}           => C{X} 
+   cast C   ( D{X} )[] {Y} => C{Y}
+   cast C[] ( D{X} )[] {Y} => ( aty[] ) {Y}
+         where aty = cast C D{X}
+
+
+ - (invoke)
+
+   ty => aty
+   tyenv, tyctx, info, context |- e : (aty_e, eff_e)
+   tyenv, tyctx, info, context |- ei : (aty_ei, eff_ei)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- e.m(e1,...,ek) ty 
+     : (aty, eff_e U  U eff_ei U effm)
+       => { aty_e.m <: (aty_e1, ..., aty_ek) -- effm --> aty  }
+
+   
+ - (staticinvoke)
+
+   ty => aty
+   tyenv, tyctx, info, context |- ei : (aty_ei, eff_ei)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- C.m(e1,...,ek) ty 
+     : (aty, U eff_ei U effm)
+       => { C.m <: (aty_e1,...,aty_ek) -- effm --> aty  }
+
+ - (true)
+
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- true : (boolean{X}, noEffect)
+
+
+ - (false)
+
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- false : (boolean{X}, noEffect)
+
+
+ - (null)
+
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- null : (null{X}, noEffect)
+
+
+ - (number)
+
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- number : (int{X}, noEffect)
+
+
+ - (literal)
+
+   String => String{X}
+   entry = (String, literal, 0, label)
+   newcontext = context (+) entry
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- literal label : (String{X}, noEffect)
+       => { newcontext } \subseteq X
+       => (entry, String, literal) U Allocation Table
+       => (newcontext, String{X}) \subseteq Allocated Objects
+
+
+ - (char)
+
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- character : (char{X}, noEffect)
+   
+
+ - (array) earr[eidx]`
+
+   aty_arr = (aty_elem[]) {X}
+   tyenv, tyctx, info, context |- earr : (aty_arr, eff_arr)
+   tyenv, tyctx, info, context |- eidx : (aty_idx, eff_idx)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- earr[eidx] tyarr tyidx label
+     : (aty_elem, eff_arr U eff_idx)
+
+ - (super)
+
+   tyctx = (C, P, IS, m, id)
+   tyenv, tyctx, info, context |- ei : (atyi, effi)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- super(e1,...,ek) ty1 ... tyk label 
+     : (P{X}, U effi)
+       => { P{X}.P <: (aty1,...,atyk) -- effVar --> P{X}  }
+          U { { context } \subseteq X  }
+
+ - (General Primitive) 
+
+   primTypeTable n ty1 ... tyk => ty
+   ty => aty
+   tyenv, tyctx, info, context |- ei : (atyi, effi)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- prim(e1,...,ek) ty1 ... tyk label 
+     : (aty, U effi)
+
+ - (==, !=) 
+
+   tyenv, tyctx, info, context |- e1 : (aty1, eff1)
+   tyenv, tyctx, info, context |- e2 : (aty2, eff2)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- e1 prim e2 ty1 ty2 label 
+     : (boolean{X}, eff1 U eff2)
+
+ - (startActivity)
+
+   tyctx = (C, P, IS, m, id)
+   allocloc = (C, m, id, label)
+   tyenv, tyctx, info, context |- e1 : (Intent{X}, eff1)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- primStartActivity(e1) ty1 label 
+     : (void{}, eff1 U effVar)
+       => { Intent{X} @ (context, allocloc) \subseteq effVar }
+
+
+[문장]
+
+ - (expr)
+
+   tyenv, tyctx, info, context |- e : (aty, eff)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- e : (tyenv, eff)
+
+
+ - (If-then-else)
+
+   tyenv, tyctx, info, context |- e : (boolean{X}, eff)
+   tyenv, tyctx, info, context |- stmt1 : (tyenv1, eff_s1)
+   tyenv, tyctx, info, context |- stmt2 : (tyenv2, eff_s2)
+   info |- tyenv1 U tyenv2 = tyenv
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- If e then stmt1 else stmt2 
+     : (tyenv, eff U eff_s1 U eff_s2)
+
+
+   Def.  info |- aty1 U aty2 = aty => constraints
+
+   info |- null{X} U C{Y} = C{Y}
+   info |- C{X}    U C{X} = C{X}
+   info |- C{X}    U C{Y} = C{Z}  => { X <: Z, Y <: Z  }
+
+   info |- C <: D
+   ---------------------------------------------------------------------
+   info |- C{X}    U D{Y} = D{Z}  => { X <: Z, Y <: Z  }
+
+   info |- D <: C
+   ---------------------------------------------------------------------
+   info |- C{X}    U D{Y} = C{Z}  => { X <: Z, Y <: Z  }
+
+
+   info |- aty1 U aty2 = aty
+   ---------------------------------------------------------------------
+   info |- aty1[]{X}    U aty2[]{Y} = aty[]{Z}  => { X <: Z, Y <: Z  }
+
+
+   isObjectMultiDimArray aty 
+   ---------------------------------------------------------------------
+   info |- aty[]{X}    U Object{Y} = Object{Y}  => { X <: Y }
+
+
+
+   Def.
+   isObjectMultiDimArray Object{X} = true
+   isObjectMultiDimArray C{X}      = false  if C != Object
+   isObjectMultiDimArray aty[]{X}  = isObjectMultiDimArray aty
+
+
+   Def.  info |- tyenv1 U tyenv2 = tyenv => constraints
+
+
+   ------------------------------------------------------------------------
+   info |- {} U tyenv2 = tyenv2
+
+   ------------------------------------------------------------------------
+   info |- tyenv1 U {} = tyenv1
+
+
+   info |- tyenv1 U tyenv2 = tyenv => constraints
+   ------------------------------------------------------------------------
+   info |- (x1,aty1):tyenv1 U (x2,aty2):tyenv2 =  (x1,aty1):(x2,aty2):tyenv
+      => constraints
+
+   info |- aty1 U aty2 = aty => constraints
+   info |- tyenv1 U tyenv2 = tyenv => constraints'
+   ------------------------------------------------------------------------
+   info |- (x,aty1):tyenv1 U (x,aty2):tyenv2 = (x,aty):tyenv
+      => constraints U constraints'
+
+   
+
+ - (LocalVarDecl)
+
+   tyctx = (C, P, IS, m, id) 
+   V (C, context, [m id], x, id) = aty_x
+   tyenv, tyctx, info, context |- e : (aty_e, eff_e)
+   tyenv1 = (x, aty_x)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- ty x id = e 
+     : (tyenv1, eff_e)
+       => { aty_e <: aty_x }
+
+
+   tyctx = (C, P, IS, m, id) 
+   V (C, context, [m id], x, id) = aty_x
+   tyenv1 = (x, aty_x)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- ty x id
+    : (tyenv1, noEffect)
+       => { null{X} <: aty_x }
+
+
+ - (Return)
+
+   tyenv return = aty_ret
+   tyenv, tyctx, info, context |- e : (aty_e, eff_e)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- return e : (tyenv, eff_e)
+       => { aty_e <: aty_ret }
+
+
+   tyenv return = aty_ret
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- return : (tyenv, noEffect)
+
+
+ - (Seq) 
+
+   tyenv, tyctx, info, context  |- s1 : (tyenv1, eff_e1)
+   tyenv1, tyctx, info, context |- s2 : (tyenv2, eff_e2)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- s1; s2 : (tyenv2, eff_e1 U eff_e2)
+
+
+ - (No Stmt)
+
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- no stmt : (tyenv, no effect)
+
+
+ - (Block)
+
+   tyenv, tyctx, info, context |- stmt : (tyenv_stmt, eff_stmt)
+   ---------------------------------------------------------------------
+   tyenv, tyctx, info, context |- { stmt } : (tyenv_stmt, eff_stmt)
+
+
+   
+[클래스 멤버]
+
+ - (Method)
+
+   ( context != [] || static \in attributes 경우)
+      - context == [] && static \in attributes    (included)
+      - context != [] && static \in attributes    (included)
+      - context == [] && static \notin attributes (excluded)
+      - context != [] && static \notin attributes (included)
+
+   tyctx = (C, P, IS, m, id)
+   V (C, context, nothing, this, 0) = C{X}    (context != [] 경우)
+   V (C, context, (m,id), return, 1) = aty_ret
+   V (C, context, (m,id), xi, idi) = aty_xi
+   M (C, context, m, id) = [aty_x1, ..., aty_xk] -- effVar --> aty_ret
+
+   tyenv_this = { (this, C{X}) }    (static \notin attributes인 경우)
+              = { }                 (static \in attributes인 경우)
+
+   tyenv = tyenv_this ++ { (return, aty_ret) } ++ { ..., (xi, aty_xi), ... }
+
+   tyenv,tyctx,info,context |- stmt : (tyenv_stmt, eff_stmt)
+   ---------------------------------------------------------------------
+   tyctx,info,context |- attributes ty_ret m id (ty1 x1 id1, ..., tyk xk idk) stmt
+
+       => { { context } \subseteq X }        ( static \notin attributes 경우 )
+          U { eff_stm <: effVar }
+
+ - (Constructor)
+
+   (context != [] 경우)
+
+   tyctx = (C, P, IS)
+   V (C, context, nothing, this, 0) = C{X}
+   V (C, context, (m,id), return, 1) = C{Y}
+   V (C, context, (m,id), xi, idi) = aty_xi
+   M (C, context, m, id) = [aty_x1, ..., aty_xk] -- effVar --> aty_ret
+   
+   tyenv = { (this, C{X}), (return, aty_ret) }
+
+   tyenv,tyctx,info,context |- stmt : (tyenv_stmt, eff_stmt)
+   ---------------------------------------------------------------------
+   tyctx,info,context |- m id (ty1 x1 id1, ..., tyk xk idk) stmt
+       => { { context } \subseteq X }
+          U { { context } \subseteq Y }
+          U { eff_stm <: effVar }
+
+ - (Field)
+
+   (context != [] 경우)
+
+   aty = aty_e    ( = e 경우)
+       = null{X}  ( [] 경우)
+
+   ty => aty_f
+
+   V (C, context, nothing, this, 0) = C{X}
+   F (C, context, f, id) = aty_f
+
+   {}, tyctx, info, context |- e : (aty_e, eff_e) 
+   ---------------------------------------------------------------------
+   tyctx,info,context |- attributes ty f id [ = e ] 
+       => { { context } \subseteq X  }
+          U { aty_e <: C{X}.f  }
+
+
+   (eff_e는 클래스 C의 컨스트럭터의 이펙트!!)
+
+
+ -  (Abstract Method)
+
+   ---------------------------------------------------------------------
+   tyctx,info,context |- attributes ty_ret m id (ty1 x1 id1, ..., tyk xk idk) stmt   
+
+
+
+[클래스]
+
+ - (Class)
+
+   tyctx = (C, P, IS, [ (m_i, id_i) ] )       (mdecli가 method/constr m_i이면)
+         = (C, P, IS, [ (f_i, id_i) ] )       (mdecli가 field f_i이면)
+   
+   tyctx, info, context |- mdecli             (context는 mdecli와 호환)
+       (mdecli에서 참조하는 변수, 필드, this에 대한 작업 필요?)
+   ---------------------------------------------------------------------
+   info |- attributes class C P IS mdecl1 ... mdeclk
+
+
+
+   *** mkActionClass에서 사용하는 함수
+
+   wrap 
+
+    - 각 Field Action에 대해 this를 초기화하고 수행하도록 변환
+    - 각 Method Action에 대해 this, 모든 지역변수, 모든 필드를 초기화하고 수행하도록 변환
+
+   wrapFieldInit
+
+    - 각 Field/Method Action에 대해 wrap 함수를 통해 적절한 초기화를 선행하도록 변환하고 
+    - 각 Action ID에 대해 이미 계산된 결과가 있으면 기록해두고 다시 활용하도록 변환
+    - 멤버 Action만 리턴 (Var action은 초기화하는데 포함시킬뿐 리턴하지는 않음)
+
+   compatibleClass 
+
+    - 주어진 context에 대해 해당되는 action이면 수행하고 아니면 수행하지 않도록 변환
+
+
+   *** context와 mdecl과 호환
+
+    - context == []이고 static 속성을 갖는 필드나 메써드 (어떤 클래스의 멤버인지는 무관)
+    - context == context o objallocsite이고 
+      objallocsite는 클래스 C의 객체를 생성하는 위치이고
+      mdecl이 C클래스의 멤버
+
+ - (Interface)
+
+   ---------------------------------------------------------------------
+   info |- attributes interface I IS mdecl1 ... mdeclk
+
+ 
+[프로그램]
+
+ - (Program)
+
+   info |- Ci
+   info |- Ij
+   ---------------------------------------------------------------------
+   info |- C1 ... Ck I1 ... In
+
+
