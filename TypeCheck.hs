@@ -252,6 +252,16 @@ tcMdecl info (c,p,is) (MethodDecl attrs retty m id targs stmt) = do
   let env  = env0 ++ [(x,ty) | (ty, x, _) <- targs]
   (env1, stmt1) <- tcStmt info ctx env retty stmt
   -- (env1, stmt1) <- tcBeginStmt info ctx env retty stmt
+  
+  -- print any overriden method if it exists
+  case lookupOverridenMethod info c
+       (MethodDecl attrs retty m id targs stmt) of
+    Nothing -> return ()
+    Just (c',m',id') ->
+      liftIO $ putStrLn 
+      (" - " ++ c ++ "." ++ m ++ ":" ++ show id ++ " overrides "
+       ++ c' ++ "." ++ m' ++ ":" ++ show id')
+  
   if isJust (lookupEnv env1 "return") == False &&
      eqType retty (TypeName "void") == False &&
      c /= m   -- TODO: This is not enough!
@@ -377,7 +387,6 @@ lookupKtype'' info c m argtys mtypes inheritance =
     [mt] -> Just mt
     mts  -> chooseMostSpecificMtype info mts
            
-
 update tyenv x t = (x,t) : [ (y,s) | (y,s) <- tyenv, x /= y ]
 
 getCurrentClass ((c,p,is,m),tyenv) = c

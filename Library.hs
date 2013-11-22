@@ -1,6 +1,7 @@
 module Library where
 
 import AST
+import Data.Maybe
 
 objClass = "Object"
 strClass = "String"
@@ -8,16 +9,20 @@ strClass = "String"
 basicClasses :: UserClasses
 basicClasses = -- TODO: extension
   [ (strClass,   [java_class]),
-    (objClass,   [java_class]),
-    ("HashSet",  [java_class]),
-    ("Set",      [java_class]), -- interface?
-    ("Iterator", [java_class])  -- interface?
+    (objClass,   [java_class])
+  -- ,
+  --   ("HashSet",  [java_class]),
+  --   ("Set",      [java_class]), -- interface?
+  --   ("Iterator", [java_class])  -- interface?
   ]
 
 basicInheritance :: Inheritance
 basicInheritance =  -- TODO: extension
-  [ (strClass, objClass),
-    ("HashSet", "Set")
+  [ (strClass, objClass)
+  -- ,
+  --   ("HashSet", "Set"),
+  --   ("Set", objClass),
+  --   ("Iterator", objClass)
   ]
 
 basicFields :: Fields
@@ -96,3 +101,43 @@ lookupPrim n tys = rettys
     rettys = [retty | (argtys, retty) <- mtypes
                     , length tys == length argtys
                     , all (True==) [eqType ty1 ty2 | (ty1,ty2) <- zip tys argtys] ]
+
+lookupOverridenMethod :: Info -> ClassName -> MemberDecl 
+                         -> Maybe (ClassName, MethodName, UniqueId)
+lookupOverridenMethod info c mdecl =
+  case matchedmethods of 
+    []     -> lookupOverridenMethod' c
+    [cmid] -> Just cmid
+    _      -> error "lookupOverridenMethod: Can't have multiple overriding methods"
+      
+  where
+    (MethodDecl attrs retty m id argdecls stmt) = mdecl
+    argtys = [argty | (argty,_,_) <- argdecls]
+    mtypes = getMtypes info ++ basicMtypes
+    matchedmethods = 
+      [ (c',m',id') | (c',m',id',argtys',retty',attrs', vars', stmt') <- mtypes,
+        let maybep = parentClass info c,
+        isJust maybep,
+        let p = fromJust maybep,
+        p==c' && m==m' && attrs==attrs' && retty==retty' && argtys==argtys' ]
+      
+    lookupOverridenMethod' c = 
+      case parentClass info c of 
+        Nothing -> Nothing
+        Just p  -> lookupOverridenMethod info p mdecl
+      
+parentClass :: Info -> ClassName -> Maybe ClassName
+parentClass info c =
+  if c == objClass then Nothing
+  else case pcs of
+    [p] -> Just p
+    []  -> error $ "parentClass: no parent class for " ++ c
+    ps  -> error $ "parentClass: too many parent classes " ++ show ps ++ " for " ++ c
+  where
+    inheritance = getInheritance info ++ basicInheritance
+    pcs = [ p | (c',p) <- inheritance, c==c' && isClass p ]
+    
+    classes = getUserClasses info ++ basicClasses
+    isClass c = 
+      not $ null [ c' | (c',attrs') <- classes, c==c' && elem java_class attrs' ]
+    

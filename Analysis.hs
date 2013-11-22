@@ -764,8 +764,8 @@ isJava = do
 
 getTyping :: StateT AnalysisState IO TypingTable
 getTyping = do
-  (_,_,typing,_,_,_) <- get
-  return typing
+  (_,_,typingtable,_,_,_) <- get
+  return typingtable
   
 putTyping :: TableEntry -> StateT AnalysisState IO ()
 putTyping typing = do
@@ -962,6 +962,7 @@ data ActionIdentifier =
   | FieldActionId ClassName FieldName UniqueId
   | VarActionId ClassName (Maybe (MethodName, UniqueId)) VarName UniqueId
   | PrimActionId PrimName UniqueId
+  | WellformedActionId ClassName MethodName UniqueId ClassName MethodName UniqueId
     deriving Eq
   
 type ActionLookupTable = [ActionLookupTableEntry]
@@ -1205,6 +1206,17 @@ prActionLookupTableEntry info context (PrimActionId m id, actionmethod) = do
   liftIO $ mapM_ prConstraint (reverse constraints) -- reverse for better readability
   resetConstraints (constraints ++ constraints0)
 
+prActionLookupTableEntry info context (WellformedActionId c m id c' m' id', actionmethod) = do
+  constraints0 <- getConstraints
+  resetConstraints []
+  liftIO $ putStrLn $ 
+    concat [c, ",", m, ",", show id, "(", showContext context, ")", " overrides ", 
+            c', ",", m', ",", show id', "(", showContext context, ")"]
+  _ <- actionmethod info context
+  constraints <- getConstraints
+  liftIO $ mapM_ prConstraint (reverse constraints) -- reverse for better readability
+  resetConstraints (constraints ++ constraints0)
+
 
 prConstraint constraint = do
       putStr   $ " - "
@@ -1245,16 +1257,25 @@ lookupFields''' info c f inheritance =
 --
 mkActionProgram :: Info -> Program -> IO ActionLookupTable
 mkActionProgram info program = do
-  actionmethodss <- mapM (mkActionClass info) program
-  return $ concat $ actionmethodss
+  actionmethodssss <- mapM (mkActionClass info) program
+  let (actionmethodss, actionoverridingmethodss) = unzip actionmethodssss
+  let actionmethodstable = concat $ actionmethodss
+  let actionoverridingmethodstable = concat $ actionoverridingmethodss
+  return (actionmethodstable ++ actionoverridingmethodstable) -- the order is important. Can we fix it to be order independent for better code management?
     
-mkActionClass :: Info -> Class -> IO ActionLookupTable
+mkActionClass :: Info -> Class -> IO (ActionLookupTable,ActionLookupTable)
 mkActionClass info (Class attrs n p is mdecls) = do
   actionmethodss <- mapM (mkActionMDecl (n, p, is)) mdecls
   actionvars     <- mkActionVar (n, p, is) (getVtypes info) -- CODE REVIEW: Need to move this to mkActionProgram before mkActionClass is called for each class!
+  
   actionlookuptable <- mapM compatibleClass 
                        $ wrapFieldInit (concat actionmethodss) actionvars
-  return actionlookuptable 
+                       
+  actionoverridingmethodss <- mapM (mkActionOverridingMDecl info n) mdecls
+  let actionoverridinglookuptable = 
+        map memorizedActionEntry $ concat actionoverridingmethodss
+  
+  return (actionlookuptable, actionoverridinglookuptable)
   where
     compatibleClass :: ActionLookupTableEntry -> IO (ActionIdentifier, ActionMember)
     compatibleClass (MethodActionId c m mid, actionmember) = do
@@ -1268,45 +1289,42 @@ mkActionClass info (Class attrs n p is mdecls) = do
       return (VarActionId c maybemid v vid, action)
     
     wrapFieldInit :: ActionLookupTable -> ActionLookupTable -> ActionLookupTable
-    wrapFieldInit actionmethods actionvars = 
-      let memorizedactionmethods = map memorizedActionEntry actionmethods 
-          memorizedactionvars    = map memorizedActionEntry actionvars
+    wrapFieldInit actionmethodstable actionvarstable = 
+      let memorizedactionmethodstable = map memorizedActionEntry actionmethodstable 
+          memorizedactionvarstable    = map memorizedActionEntry actionvarstable
           
           memorizedactionfields  = 
-            [ a | (FieldActionId _ _ _, a) <- memorizedactionmethods ]
+            [ a | (FieldActionId _ _ _, a) <- memorizedactionmethodstable ]
       in
-       (map (wrap memorizedactionfields memorizedactionvars) 
-        memorizedactionmethods)
+       (map (wrap memorizedactionfields memorizedactionvarstable) 
+        memorizedactionmethodstable)
     
     wrap :: [ActionMember] -> ActionLookupTable -> ActionLookupTableEntry 
             -> ActionLookupTableEntry
     wrap fieldActions varActionTable (FieldActionId c f id, a) = 
-      let varAction = head
+      let thisAction = head
             [ a | (VarActionId c' Nothing "this" _, a) <- varActionTable,c==c']
-      in  (FieldActionId c f id, thisInit varAction a)
+      in  (FieldActionId c f id, thisInit thisAction a)
     wrap fieldActions varActionTable (MethodActionId c m id, a) = 
       let varActions = 
             [ a | (VarActionId c' (Just (m',id')) _ _, a) <- varActionTable
                 , c==c', m==m', id==id' ] ++
             [ a | (VarActionId c' Nothing "this" _, a) <- varActionTable,c==c' ]
-      in
-       (MethodActionId c m id, 
-        fieldVarInit fieldActions varActions a)
+      in  (MethodActionId c m id, fieldVarInit fieldActions varActions a)
     
-    fieldVarInit :: [ActionMember] -> [ActionMember]
-                    -> ActionMember -> ActionMember
+    fieldVarInit :: [ActionMember] -> [ActionMember] -> ActionMember -> ActionMember
     fieldVarInit fieldActions varActions a info context = do
       let f a m = do a info context; m
-      foldr f (return ()) varActions    -- 'this' should be initialized first
+      foldr f (return ()) varActions    -- 'this' (and vars) should be initialized first
       foldr f (return ()) fieldActions  -- Every field initialization needs it.
       a info context
 
-    thisInit varAction a info context = do
-      varAction info context
+    thisInit thisAction a info context = do -- thisAction preceeds a.
+      thisAction info context
       a info context
       
 mkActionClass info (Interface n is mdecls) = do
-  return []
+  return ([], [])
   
 memorizedActionEntry :: ActionLookupTableEntry -> ActionLookupTableEntry 
 memorizedActionEntry (FieldActionId c f id, a) = 
@@ -1341,6 +1359,16 @@ memorizedActionEntry (PrimActionId m id, a) =
           Just _  -> return ()
   in (PrimActionId m id, check a)
 
+memorizedActionEntry (WellformedActionId c m id c' m' id', a) = 
+  let check action info context = do
+        maybemty    <- getMethodtyping c context m id
+        maybemty'   <- getMethodtyping c' context m' id'
+        case (maybemty,maybemty') of
+          (Just _, Just _) -> action info context
+          _                -> return ()
+  in (MethodActionId c m id, check a)
+
+
 isCallable info c alloctable context =
   if isEmptyContext context then True
   else 
@@ -1359,12 +1387,12 @@ mkCompatibleClass n action =
         else action info context
     
 mkActionMDecl :: ClassInfo -> MemberDecl -> IO ActionLookupTable
-mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do
+mkActionMDecl (n, p, is) (MethodDecl attrs retty m id argdecls stmt) = do  
   actionstmt <- mkActionStmt stmt
   return [( MethodActionId n m id, 
             mkaction actionstmt (n, p, is, Just (m,id)) )]
   where
-    mkaction actionstmt typingctx info context =
+    mkaction actionstmt typingctx info context = do
       if isEmptyContext context && elem "static" attrs == False 
       then return () 
       else mkaction' actionstmt typingctx info context 
@@ -1456,6 +1484,23 @@ mkActionMDecl (n, p, is) (FieldDecl attrs ty f id maybee) = do
 mkActionMDecl (n, p, is) (AbstractMethodDecl retty m id argdecls) = do
   return []
       
+mkActionOverridingMDecl  :: Info -> ClassName -> MemberDecl -> IO ActionLookupTable
+mkActionOverridingMDecl info n (MethodDecl attrs retty m id argdecls stmt) = do  
+  case lookupOverridenMethod info n  
+       (MethodDecl attrs retty m id argdecls stmt) of
+    Nothing -> return []
+    Just (c',m',id') -> 
+      return [(WellformedActionId n m id c' m' id', action c' m' id')]
+  where
+    action c' m' id' info context = do
+      maybemty  <- getMethodtyping n  context m  id  -- m == m'
+      maybemty' <- getMethodtyping c' context m' id'
+      case (maybemty, maybemty') of
+        (Just (atys, aty, eff), Just (atys', aty', eff')) 
+          -> putConstraint (C_mtype atys eff aty atys' eff' aty')
+        _ -> liftIO $ putStrLn $ "mkActionOverridingMDecl: something wrong"
+        
+mkActionOverridingMDecl info n _ = return []        
 
 mkActionVar :: ClassInfo -> Vtypes -> IO ActionLookupTable
 mkActionVar (n, p, is) vtypes = 
