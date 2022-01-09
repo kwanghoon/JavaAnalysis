@@ -3,6 +3,7 @@
 
 ### INSTRUCTION
 
+```
  0. Install Glasgow Haskell Compiler 
      - Avaialable from http://www.haskell.org
 
@@ -4821,3 +4822,4 @@ Allocated Contexual Objects
  - o506 : Main{x507}
 
 18.03526 seconds in total
+```
