@@ -1,5 +1,5 @@
 # A reference implementation for the following paper
- - Kwanghoon Choi, Byeong-Mo Chang, A Type and Effect System for Activation Flow of Components in Android Programs, Information Processing Letters, 114(11):620-627, November 2014.
+ - Kwanghoon Choi, Byeong-Mo Chang, A Type and Effect System for Activation Flow of Components in Android Programs, Information Processing Letters, 114(11):620-627, November 2014. [http://mobilesw.yonsei.ac.kr/paper/tr-mar-2014-1.pdf](pdf)
 
 ### INSTRUCTION
 
